@@ -15,7 +15,7 @@ import (
 func main() {
 	err := godotenv.Load()
 	if err != nil {
-		log.Fatal("Error loading .env file")
+		log.Println("Info: .env file not found, relying on system environment variables")
 	}
 
 	token := os.Getenv("DISCORD_TOKEN")
