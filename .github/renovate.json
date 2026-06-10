@@ -1,0 +1,12 @@
+{
+  "extends": [
+    "config:base",
+    ":timezone(Asia/Jakarta)"
+  ],
+  "packageRules": [
+    {
+      "matchUpdateTypes": ["minor", "patch"],
+      "automerge": true
+    }
+  ]
+}
