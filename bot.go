@@ -664,12 +664,18 @@ func (b *Bot) handleVoiceServerUpdate(s *discordgo.Session, e *discordgo.VoiceSe
 		return
 	}
 
-	endpoint := e.Endpoint
-	if strings.HasPrefix(endpoint, "wss://") {
-		endpoint = strings.TrimPrefix(endpoint, "wss://")
+	if e.Endpoint == "" || e.Token == "" {
+		return
 	}
 
+	endpoint := normalizeVoiceEndpoint(e.Endpoint)
 	b.music.Client().OnVoiceServerUpdate(context.Background(), guildID, e.Token, endpoint)
+}
+
+func normalizeVoiceEndpoint(endpoint string) string {
+	endpoint = strings.TrimPrefix(endpoint, "wss://")
+	endpoint = strings.TrimPrefix(endpoint, "ws://")
+	return endpoint
 }
 
 func stringPtr(s string) *string {

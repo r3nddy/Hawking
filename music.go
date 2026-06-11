@@ -7,6 +7,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/disgoorg/disgolink/v3/disgolink"
 	"github.com/disgoorg/disgolink/v3/lavalink"
@@ -42,7 +43,11 @@ func NewMusicManager(botUserID string, spotify *SpotifyManager) (*MusicManager, 
 		queues:  make(map[string][]lavalink.Track),
 	}
 
-	m.client = disgolink.New(botID, disgolink.WithListenerFunc(m.onTrackEnd))
+	m.client = disgolink.New(botID,
+		disgolink.WithListenerFunc(m.onTrackEnd),
+		disgolink.WithListenerFunc(m.onTrackException),
+		disgolink.WithListenerFunc(m.onWebSocketClosed),
+	)
 	return m, nil
 }
 
@@ -142,6 +147,10 @@ func (m *MusicManager) Play(ctx context.Context, guildID, query string) (*PlayRe
 		return &PlayResult{Action: "queued", Track: track}, nil
 	}
 
+	if err := m.waitForVoice(ctx, sfGuildID); err != nil {
+		return nil, err
+	}
+
 	if err := m.playTrack(ctx, sfGuildID, track); err != nil {
 		return nil, err
 	}
@@ -233,6 +242,9 @@ func (m *MusicManager) ClearGuild(guildID string) {
 }
 
 func (m *MusicManager) onTrackEnd(player disgolink.Player, event lavalink.TrackEndEvent) {
+	log.Printf("Track ended in guild %s: %s — %s (reason: %s)",
+		player.GuildID(), event.Track.Info.Title, event.Track.Info.Author, event.Reason)
+
 	if !event.Reason.MayStartNext() {
 		return
 	}
@@ -282,8 +294,42 @@ func (m *MusicManager) resolveQuery(ctx context.Context, query string) (string, 
 	return "ytsearch:" + query, nil
 }
 
+func (m *MusicManager) onTrackException(player disgolink.Player, event lavalink.TrackExceptionEvent) {
+	log.Printf("Track exception in guild %s: %s — %v",
+		player.GuildID(), event.Track.Info.Title, event.Exception)
+}
+
+func (m *MusicManager) onWebSocketClosed(player disgolink.Player, event lavalink.WebSocketClosedEvent) {
+	log.Printf("Voice websocket closed in guild %s: code=%d reason=%s remote=%v",
+		player.GuildID(), event.Code, event.Reason, event.ByRemote)
+}
+
+func (m *MusicManager) waitForVoice(ctx context.Context, guildID snowflake.ID) error {
+	deadline := time.Now().Add(15 * time.Second)
+	ticker := time.NewTicker(200 * time.Millisecond)
+	defer ticker.Stop()
+
+	for {
+		player := m.client.ExistingPlayer(guildID)
+		if player != nil && player.ChannelID() != nil && player.State().Connected {
+			return nil
+		}
+
+		if time.Now().After(deadline) {
+			return fmt.Errorf("timeout menunggu koneksi voice Lavalink (pastikan bot sudah di voice channel)")
+		}
+
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+		}
+	}
+}
+
 func (m *MusicManager) playTrack(ctx context.Context, guildID snowflake.ID, track lavalink.Track) error {
 	player := m.client.Player(guildID)
+	log.Printf("Playing track in guild %s: %s — %s", guildID, track.Info.Title, track.Info.Author)
 	return player.Update(ctx, lavalink.WithTrack(track))
 }
 
