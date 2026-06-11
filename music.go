@@ -20,6 +20,36 @@ type PlayResult struct {
 	Track  lavalink.Track
 }
 
+type voiceGate struct {
+	mu     sync.Mutex
+	state  bool
+	server bool
+	once   sync.Once
+	ready  chan struct{}
+}
+
+func newVoiceGate() *voiceGate {
+	return &voiceGate{ready: make(chan struct{})}
+}
+
+func (g *voiceGate) markState()  { g.mark(true, false) }
+func (g *voiceGate) markServer() { g.mark(false, true) }
+
+func (g *voiceGate) mark(state, server bool) {
+	g.mu.Lock()
+	if state {
+		g.state = true
+	}
+	if server {
+		g.server = true
+	}
+	ready := g.state && g.server
+	g.mu.Unlock()
+	if ready {
+		g.once.Do(func() { close(g.ready) })
+	}
+}
+
 type MusicManager struct {
 	client      disgolink.Client
 	spotify     *SpotifyManager
@@ -27,6 +57,8 @@ type MusicManager struct {
 	mu          sync.Mutex
 	playMu      sync.Mutex
 	playWaiters map[string]chan error
+	voiceMu     sync.Mutex
+	voiceGates  map[string]*voiceGate
 }
 
 var defaultNodes = []disgolink.NodeConfig{
@@ -51,6 +83,7 @@ func NewMusicManager(botUserID string, spotify *SpotifyManager) (*MusicManager, 
 		disgolink.WithListenerFunc(m.onTrackEnd),
 		disgolink.WithListenerFunc(m.onTrackException),
 		disgolink.WithListenerFunc(m.onWebSocketClosed),
+		disgolink.WithListenerFunc(m.onPlayerUpdate),
 	)
 	return m, nil
 }
@@ -201,7 +234,7 @@ func (m *MusicManager) Play(ctx context.Context, guildID, query string) (*PlayRe
 		return &PlayResult{Action: "queued", Track: track}, nil
 	}
 
-	if err := m.waitForVoice(ctx, sfGuildID); err != nil {
+	if err := m.waitForVoice(ctx, guildID, sfGuildID); err != nil {
 		return nil, err
 	}
 
@@ -299,6 +332,42 @@ func (m *MusicManager) GetNowPlaying(guildID string) (*lavalink.Track, bool, lav
 
 func (m *MusicManager) ClearGuild(guildID string) {
 	m.clearQueue(guildID)
+}
+
+func (m *MusicManager) ResetVoiceGate(guildID string) {
+	m.voiceMu.Lock()
+	defer m.voiceMu.Unlock()
+	if m.voiceGates == nil {
+		m.voiceGates = make(map[string]*voiceGate)
+	}
+	m.voiceGates[guildID] = newVoiceGate()
+}
+
+func (m *MusicManager) NotifyVoiceState(guildID string) {
+	m.getVoiceGate(guildID).markState()
+}
+
+func (m *MusicManager) NotifyVoiceServer(guildID string) {
+	m.getVoiceGate(guildID).markServer()
+}
+
+func (m *MusicManager) getVoiceGate(guildID string) *voiceGate {
+	m.voiceMu.Lock()
+	defer m.voiceMu.Unlock()
+	if m.voiceGates == nil {
+		m.voiceGates = make(map[string]*voiceGate)
+	}
+	if g, ok := m.voiceGates[guildID]; ok {
+		return g
+	}
+	g := newVoiceGate()
+	m.voiceGates[guildID] = g
+	return g
+}
+
+func (m *MusicManager) onPlayerUpdate(player disgolink.Player, event lavalink.PlayerUpdateMessage) {
+	log.Printf("[voice] PlayerUpdate guild=%s connected=%v ping=%dms",
+		player.GuildID(), event.State.Connected, event.State.Ping)
 }
 
 func (m *MusicManager) onTrackStart(player disgolink.Player, event lavalink.TrackStartEvent) {
@@ -424,28 +493,43 @@ func (m *MusicManager) signalPlayWait(guildID string, err error) {
 	}
 }
 
-func (m *MusicManager) waitForVoice(ctx context.Context, guildID snowflake.ID) error {
-	deadline := time.Now().Add(15 * time.Second)
-	ticker := time.NewTicker(200 * time.Millisecond)
+func (m *MusicManager) waitForVoice(ctx context.Context, guildID string, sfGuildID snowflake.ID) error {
+	if player := m.client.ExistingPlayer(sfGuildID); player != nil && player.ChannelID() != nil {
+		if player.State().Connected {
+			return nil
+		}
+	}
+
+	gate := m.getVoiceGate(guildID)
+	deadline := time.After(20 * time.Second)
+	ticker := time.NewTicker(300 * time.Millisecond)
 	defer ticker.Stop()
 
 	for {
-		player := m.client.ExistingPlayer(guildID)
-		if player != nil && player.ChannelID() != nil {
-			state := player.State()
-			if state.Connected && state.Ping > 0 {
+		select {
+		case <-gate.ready:
+			log.Printf("[voice] guild %s: Discord voice events received", guildID)
+			time.Sleep(500 * time.Millisecond)
+			return nil
+		case <-deadline:
+			player := m.client.ExistingPlayer(sfGuildID)
+			if player != nil && player.ChannelID() != nil {
+				log.Printf("[voice] guild %s: proceeding with channel set (connected=%v)",
+					guildID, player.State().Connected)
 				return nil
 			}
-		}
-
-		if time.Now().After(deadline) {
 			return fmt.Errorf("timeout menunggu koneksi voice Lavalink (pastikan bot sudah di voice channel)")
-		}
-
-		select {
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-ticker.C:
+			player := m.client.ExistingPlayer(sfGuildID)
+			if player == nil {
+				continue
+			}
+			if player.State().Connected {
+				log.Printf("[voice] guild %s: Lavalink voice connected", guildID)
+				return nil
+			}
 		}
 	}
 }

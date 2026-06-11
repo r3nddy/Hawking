@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"log"
 	"strings"
-	"time"
 
 	"github.com/bwmarrin/discordgo"
 	"github.com/disgoorg/snowflake/v2"
@@ -422,6 +421,8 @@ func (b *Bot) handleSlashCommand(s *discordgo.Session, i *discordgo.InteractionC
 			return
 		}
 
+		b.music.ResetVoiceGate(i.GuildID)
+
 		botVS, _ := s.State.VoiceState(i.GuildID, s.State.User.ID)
 		needsJoin := botVS == nil || botVS.ChannelID == "" || botVS.ChannelID != vs.ChannelID
 		if needsJoin {
@@ -433,7 +434,6 @@ func (b *Bot) handleSlashCommand(s *discordgo.Session, i *discordgo.InteractionC
 				})
 				return
 			}
-			time.Sleep(2 * time.Second)
 		}
 
 		query := i.ApplicationCommandData().Options[0].StringValue()
@@ -654,7 +654,18 @@ func (b *Bot) handleVoiceStateUpdate(s *discordgo.Session, e *discordgo.VoiceSta
 		channelID = &id
 	}
 
-	b.music.Client().OnVoiceStateUpdate(context.Background(), guildID, channelID, e.SessionID)
+	sessionID := e.SessionID
+	if sessionID == "" {
+		if vs, err := s.State.VoiceState(e.GuildID, e.UserID); err == nil {
+			sessionID = vs.SessionID
+		}
+	}
+
+	log.Printf("[voice] VoiceStateUpdate guild=%s channel=%s session=%s", e.GuildID, e.ChannelID, sessionID)
+	b.music.Client().OnVoiceStateUpdate(context.Background(), guildID, channelID, sessionID)
+	if channelID != nil {
+		b.music.NotifyVoiceState(e.GuildID)
+	}
 }
 
 func (b *Bot) handleVoiceServerUpdate(s *discordgo.Session, e *discordgo.VoiceServerUpdate) {
@@ -672,7 +683,9 @@ func (b *Bot) handleVoiceServerUpdate(s *discordgo.Session, e *discordgo.VoiceSe
 	}
 
 	endpoint := normalizeVoiceEndpoint(e.Endpoint)
+	log.Printf("[voice] VoiceServerUpdate guild=%s endpoint=%s", e.GuildID, endpoint)
 	b.music.Client().OnVoiceServerUpdate(context.Background(), guildID, e.Token, endpoint)
+	b.music.NotifyVoiceServer(e.GuildID)
 }
 
 func normalizeVoiceEndpoint(endpoint string) string {
