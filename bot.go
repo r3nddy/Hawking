@@ -345,7 +345,7 @@ func (b *Bot) handleSlashCommand(s *discordgo.Session, i *discordgo.InteractionC
 			return
 		}
 
-		_, err = s.ChannelVoiceJoin(i.GuildID, vs.ChannelID, false, true)
+		err = s.ChannelVoiceJoinManual(i.GuildID, vs.ChannelID, false, false)
 		if err != nil {
 			s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
 				Type: discordgo.InteractionResponseChannelMessageWithSource,
@@ -368,8 +368,8 @@ func (b *Bot) handleSlashCommand(s *discordgo.Session, i *discordgo.InteractionC
 			return
 		}
 
-		vc, exists := s.VoiceConnections[i.GuildID]
-		if !exists {
+		botVS, err := s.State.VoiceState(i.GuildID, s.State.User.ID)
+		if err != nil || botVS.ChannelID == "" {
 			s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
 				Type: discordgo.InteractionResponseChannelMessageWithSource,
 				Data: &discordgo.InteractionResponseData{Content: "❌ Bot tidak sedang berada di voice channel mana pun."},
@@ -377,17 +377,17 @@ func (b *Bot) handleSlashCommand(s *discordgo.Session, i *discordgo.InteractionC
 			return
 		}
 
-		err := vc.Disconnect()
+		if b.music != nil {
+			_ = b.music.Stop(context.Background(), i.GuildID)
+		}
+
+		err = s.ChannelVoiceJoinManual(i.GuildID, "", false, false)
 		if err != nil {
 			s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
 				Type: discordgo.InteractionResponseChannelMessageWithSource,
 				Data: &discordgo.InteractionResponseData{Content: "❌ Gagal keluar dari voice channel: " + err.Error()},
 			})
 			return
-		}
-
-		if b.music != nil {
-			b.music.ClearGuild(i.GuildID)
 		}
 
 		s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
@@ -421,8 +421,9 @@ func (b *Bot) handleSlashCommand(s *discordgo.Session, i *discordgo.InteractionC
 			return
 		}
 
-		if _, exists := s.VoiceConnections[i.GuildID]; !exists {
-			_, err = s.ChannelVoiceJoin(i.GuildID, vs.ChannelID, false, true)
+		botVS, _ := s.State.VoiceState(i.GuildID, s.State.User.ID)
+		if botVS == nil || botVS.ChannelID == "" || botVS.ChannelID != vs.ChannelID {
+			err = s.ChannelVoiceJoinManual(i.GuildID, vs.ChannelID, false, false)
 			if err != nil {
 				s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
 					Type: discordgo.InteractionResponseChannelMessageWithSource,
