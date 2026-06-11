@@ -38,7 +38,19 @@ func main() {
 		log.Fatal("Error pinging database: ", err)
 	}
 
-	bot, err := NewBot(token, db)
+	ownerID := os.Getenv("OWNER_ID")
+	if ownerID == "" {
+		log.Println("Warning: OWNER_ID is not set in .env. Bot owner commands will not work.")
+	}
+	authManager := NewAuthManager(ownerID, db)
+	storageManager := NewStorageManager(db)
+
+	spotifyManager, err := NewSpotifyManager()
+	if err != nil {
+		log.Println("Warning: Failed to initialize Spotify Client (commands that require Spotify won't work):", err)
+	}
+
+	bot, err := NewBot(token, db, authManager, spotifyManager, storageManager)
 	if err != nil {
 		log.Fatal("Error creating bot: ", err)
 	}
