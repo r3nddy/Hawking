@@ -1,5 +1,5 @@
 server:
-  port: 2333
+  port: __PORT__
   address: 0.0.0.0
 
 plugins:
@@ -19,7 +19,7 @@ lavalink:
     - dependency: "dev.lavalink.youtube:youtube-plugin:1.17.0"
       snapshot: false
   server:
-    password: "youshallnotpass"
+    password: "__PASSWORD__"
     sources:
       youtube: false
       bandcamp: true
