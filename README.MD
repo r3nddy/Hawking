@@ -1,6 +1,6 @@
 # Hawking Discord Bot
 
-Hawking is a modern, lightweight Discord bot crafted in Go. Originally built to dynamically fetch and display university class schedules, it has now been enhanced with Spotify cataloging features.
+Hawking is a modern, lightweight Discord bot crafted in Go. Originally built to dynamically fetch and display university class schedules, it has now been enhanced with Spotify
 
 ## Key Features
 
@@ -21,9 +21,3 @@ Hawking is a modern, lightweight Discord bot crafted in Go. Originally built to 
 | `/revoke [user]` | **Owner Only**          | Rescinds a user's permission to interact with the music commands.  |
 
 ---
-
-## Prerequisites
-
-- **Go**: Version 1.25 or higher.
-- **Database**: A PostgreSQL instance (e.g., Supabase).
-- **Credentials**: A Discord Bot Token and a Spotify Developer Application.
