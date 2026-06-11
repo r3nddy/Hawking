@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -20,10 +21,12 @@ type PlayResult struct {
 }
 
 type MusicManager struct {
-	client  disgolink.Client
-	spotify *SpotifyManager
-	queues  map[string][]lavalink.Track
-	mu      sync.Mutex
+	client      disgolink.Client
+	spotify     *SpotifyManager
+	queues      map[string][]lavalink.Track
+	mu          sync.Mutex
+	playMu      sync.Mutex
+	playWaiters map[string]chan error
 }
 
 var defaultNodes = []disgolink.NodeConfig{
@@ -44,6 +47,7 @@ func NewMusicManager(botUserID string, spotify *SpotifyManager) (*MusicManager, 
 	}
 
 	m.client = disgolink.New(botID,
+		disgolink.WithListenerFunc(m.onTrackStart),
 		disgolink.WithListenerFunc(m.onTrackEnd),
 		disgolink.WithListenerFunc(m.onTrackException),
 		disgolink.WithListenerFunc(m.onWebSocketClosed),
@@ -67,26 +71,58 @@ func (m *MusicManager) Connect(ctx context.Context) error {
 		}
 		secure := os.Getenv("LAVALINK_SECURE") != "false"
 
-		_, err := m.client.AddNode(ctx, disgolink.NodeConfig{
+		return m.connectNode(ctx, disgolink.NodeConfig{
 			Name:     "default",
 			Address:  host + ":" + port,
 			Password: password,
 			Secure:   secure,
 		})
-		return err
 	}
 
 	var lastErr error
 	for _, node := range defaultNodes {
-		_, err := m.client.AddNode(ctx, node)
+		err := m.connectNode(ctx, node)
 		if err == nil {
-			log.Printf("Connected to Lavalink node: %s", node.Name)
 			return nil
 		}
 		lastErr = err
-		log.Printf("Failed to connect to Lavalink node %s: %v", node.Name, err)
+		log.Printf("Skipping Lavalink node %s: %v", node.Name, err)
 	}
-	return fmt.Errorf("failed to connect to any Lavalink node: %w", lastErr)
+	return fmt.Errorf("tidak ada node Lavalink yang kompatibel (butuh v4.2.0+ untuk DAVE): %w", lastErr)
+}
+
+func (m *MusicManager) connectNode(ctx context.Context, cfg disgolink.NodeConfig) error {
+	node, err := m.client.AddNode(ctx, cfg)
+	if err != nil {
+		return err
+	}
+
+	version, err := node.Version(ctx)
+	if err != nil {
+		log.Printf("Connected to Lavalink node %s (version unknown)", cfg.Name)
+		return nil
+	}
+
+	version = strings.TrimSpace(version)
+	log.Printf("Connected to Lavalink node %s (v%s)", cfg.Name, version)
+
+	if !lavalinkVersionSupportsDAVE(version) {
+		m.client.RemoveNode(cfg.Name)
+		return fmt.Errorf("v%s tidak support DAVE (butuh Lavalink 4.2.0+)", version)
+	}
+
+	return nil
+}
+
+func lavalinkVersionSupportsDAVE(version string) bool {
+	version = strings.TrimSpace(strings.TrimPrefix(version, "v"))
+	parts := strings.Split(version, ".")
+	if len(parts) < 2 {
+		return false
+	}
+	major, _ := strconv.Atoi(parts[0])
+	minor, _ := strconv.Atoi(parts[1])
+	return major > 4 || (major == 4 && minor >= 2)
 }
 
 func (m *MusicManager) Play(ctx context.Context, guildID, query string) (*PlayResult, error) {
@@ -151,7 +187,13 @@ func (m *MusicManager) Play(ctx context.Context, guildID, query string) (*PlayRe
 		return nil, err
 	}
 
+	waitPlayback, cleanup := m.registerPlayWait(guildID)
+	defer cleanup()
+
 	if err := m.playTrack(ctx, sfGuildID, track); err != nil {
+		return nil, err
+	}
+	if err := waitPlayback(ctx); err != nil {
 		return nil, err
 	}
 	return &PlayResult{Action: "playing", Track: track}, nil
@@ -241,9 +283,19 @@ func (m *MusicManager) ClearGuild(guildID string) {
 	m.clearQueue(guildID)
 }
 
+func (m *MusicManager) onTrackStart(player disgolink.Player, event lavalink.TrackStartEvent) {
+	log.Printf("Track started in guild %s: %s — %s",
+		player.GuildID(), event.Track.Info.Title, event.Track.Info.Author)
+	m.signalPlayWait(player.GuildID().String(), nil)
+}
+
 func (m *MusicManager) onTrackEnd(player disgolink.Player, event lavalink.TrackEndEvent) {
 	log.Printf("Track ended in guild %s: %s — %s (reason: %s)",
 		player.GuildID(), event.Track.Info.Title, event.Track.Info.Author, event.Reason)
+
+	if event.Reason == lavalink.TrackEndReasonLoadFailed {
+		m.signalPlayWait(player.GuildID().String(), fmt.Errorf("gagal memutar audio (%s)", event.Reason))
+	}
 
 	if !event.Reason.MayStartNext() {
 		return
@@ -297,11 +349,60 @@ func (m *MusicManager) resolveQuery(ctx context.Context, query string) (string, 
 func (m *MusicManager) onTrackException(player disgolink.Player, event lavalink.TrackExceptionEvent) {
 	log.Printf("Track exception in guild %s: %s — %v",
 		player.GuildID(), event.Track.Info.Title, event.Exception)
+	m.signalPlayWait(player.GuildID().String(), fmt.Errorf("track exception: %s", event.Exception.Message))
 }
 
 func (m *MusicManager) onWebSocketClosed(player disgolink.Player, event lavalink.WebSocketClosedEvent) {
 	log.Printf("Voice websocket closed in guild %s: code=%d reason=%s remote=%v",
 		player.GuildID(), event.Code, event.Reason, event.ByRemote)
+
+	msg := fmt.Sprintf("koneksi voice terputus: %s (code %d)", event.Reason, event.Code)
+	if event.Code == 4017 {
+		msg = "Discord menolak koneksi voice (DAVE/E2EE required). Node Lavalink harus v4.2.0+"
+	}
+	m.signalPlayWait(player.GuildID().String(), fmt.Errorf("%s", msg))
+}
+
+func (m *MusicManager) registerPlayWait(guildID string) (func(context.Context) error, func()) {
+	ch := make(chan error, 1)
+	m.playMu.Lock()
+	if m.playWaiters == nil {
+		m.playWaiters = make(map[string]chan error)
+	}
+	m.playWaiters[guildID] = ch
+	m.playMu.Unlock()
+
+	cleanup := func() {
+		m.playMu.Lock()
+		delete(m.playWaiters, guildID)
+		m.playMu.Unlock()
+	}
+
+	wait := func(ctx context.Context) error {
+		select {
+		case err := <-ch:
+			return err
+		case <-time.After(15 * time.Second):
+			return fmt.Errorf("audio tidak mulai — pastikan node Lavalink v4.2.0+ (DAVE) dan bot sudah di voice channel")
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+
+	return wait, cleanup
+}
+
+func (m *MusicManager) signalPlayWait(guildID string, err error) {
+	m.playMu.Lock()
+	ch, ok := m.playWaiters[guildID]
+	m.playMu.Unlock()
+	if !ok {
+		return
+	}
+	select {
+	case ch <- err:
+	default:
+	}
 }
 
 func (m *MusicManager) waitForVoice(ctx context.Context, guildID snowflake.ID) error {
