@@ -1,14 +1,29 @@
 # Hawking Discord Bot
 
-Hawking is a simple Discord bot written in Go. It is designed to display university class schedules dynamically by fetching data from a Supabase PostgreSQL database.
+Hawking is a modern, lightweight Discord bot crafted in Go. Originally built to dynamically fetch and display university class schedules, it has now been enhanced with Spotify cataloging features.
 
-## Features
+## Key Features
 
-- Dynamic Schedule Display: Uses a slash command (`/jadwal`) in Discord to display class schedules from the database.
+- **Dynamic Schedule Retrieval**: Query university class timetables instantly using the public `/jadwal` command.
+- **Spotify Cataloging & Archiving**: Extract track metadata (titles, artists) directly from Spotify URLs using the Spotify Web API and persist them into your personal database.
+- **Granular Authorization Engine**: A secure permission layer restricting administrative and music management commands to the bot owner and whitelisted members.
+
+---
+
+## Command Registry
+
+| Command          | Scope                   | Description                                                        |
+| :--------------- | :---------------------- | :----------------------------------------------------------------- |
+| `/jadwal`        | **Public**              | Retrieves and renders the university class schedule.               |
+| `/save [url]`    | **Owner & Whitelisted** | Parses a Spotify track URL, fetches its metadata, and archives it. |
+| `/mysongs`       | **Owner & Whitelisted** | Displays the curated list of saved tracks.                         |
+| `/grant [user]`  | **Owner Only**          | Grants an individual permissions to use the music commands.        |
+| `/revoke [user]` | **Owner Only**          | Rescinds a user's permission to interact with the music commands.  |
+
+---
 
 ## Prerequisites
 
-Before running this bot locally, ensure you have the following installed and set up:
-
-1. Golang (Version 1.25 or higher)
-2. A Discord Bot Token from the Discord Developer Portal
+- **Go**: Version 1.25 or higher.
+- **Database**: A PostgreSQL instance (e.g., Supabase).
+- **Credentials**: A Discord Bot Token and a Spotify Developer Application.
