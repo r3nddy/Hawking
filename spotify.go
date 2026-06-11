@@ -16,11 +16,18 @@ type SpotifyManager struct {
 }
 
 func NewSpotifyManager() (*SpotifyManager, error) {
-	clientID := os.Getenv("SPOTIFY_ID")
-	clientSecret := os.Getenv("SPOTIFY_SECRET")
+	clientID := os.Getenv("SPOTIFY_CLIENT_ID")
+	if clientID == "" {
+		clientID = os.Getenv("SPOTIFY_ID")
+	}
+
+	clientSecret := os.Getenv("SPOTIFY_CLIENT_SECRET")
+	if clientSecret == "" {
+		clientSecret = os.Getenv("SPOTIFY_SECRET")
+	}
 
 	if clientID == "" || clientSecret == "" {
-		return nil, errors.New("SPOTIFY_ID or SPOTIFY_SECRET is not set in .env")
+		return nil, errors.New("neither SPOTIFY_CLIENT_ID nor SPOTIFY_ID, and/or SPOTIFY_CLIENT_SECRET nor SPOTIFY_SECRET are set in env")
 	}
 
 	ctx := context.Background()
