@@ -45,10 +45,7 @@ func main() {
 	authManager := NewAuthManager(ownerID, db)
 	storageManager := NewStorageManager(db)
 
-	spotifyManager, err := NewSpotifyManager()
-	if err != nil {
-		log.Println("Warning: Failed to initialize Spotify Client (commands that require Spotify won't work):", err)
-	}
+	spotifyManager := NewSpotifyManager()
 
 	bot, err := NewBot(token, db, authManager, spotifyManager, storageManager)
 	if err != nil {
