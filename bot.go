@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"strings"
+	"time"
 
 	"github.com/bwmarrin/discordgo"
 	"github.com/disgoorg/snowflake/v2"
@@ -422,7 +423,8 @@ func (b *Bot) handleSlashCommand(s *discordgo.Session, i *discordgo.InteractionC
 		}
 
 		botVS, _ := s.State.VoiceState(i.GuildID, s.State.User.ID)
-		if botVS == nil || botVS.ChannelID == "" || botVS.ChannelID != vs.ChannelID {
+		needsJoin := botVS == nil || botVS.ChannelID == "" || botVS.ChannelID != vs.ChannelID
+		if needsJoin {
 			err = s.ChannelVoiceJoinManual(i.GuildID, vs.ChannelID, false, false)
 			if err != nil {
 				s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
@@ -431,6 +433,7 @@ func (b *Bot) handleSlashCommand(s *discordgo.Session, i *discordgo.InteractionC
 				})
 				return
 			}
+			time.Sleep(2 * time.Second)
 		}
 
 		query := i.ApplicationCommandData().Options[0].StringValue()
