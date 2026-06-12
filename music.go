@@ -302,7 +302,7 @@ func (m *MusicManager) Skip(ctx context.Context, guildID string) (*lavalink.Trac
 		return nil, nil
 	}
 
-	if err := player.Update(ctx, lavalink.WithTrack(*next)); err != nil {
+	if err := m.playTrack(ctx, player.GuildID(), *next); err != nil {
 		return nil, err
 	}
 	return next, nil
@@ -580,19 +580,22 @@ func (m *MusicManager) waitForVoice(ctx context.Context, guildID string, sfGuild
 	deadline := time.After(20 * time.Second)
 	ticker := time.NewTicker(300 * time.Millisecond)
 	defer ticker.Stop()
+	voiceEventsReady := false
+	ready := gate.ready
 
 	for {
 		select {
-		case <-gate.ready:
+		case <-ready:
+			voiceEventsReady = true
+			ready = nil
 			log.Printf("[voice] guild %s: Discord voice events received", guildID)
-			time.Sleep(500 * time.Millisecond)
-			return nil
 		case <-deadline:
 			player := m.client.ExistingPlayer(sfGuildID)
-			if player != nil && player.ChannelID() != nil {
-				log.Printf("[voice] guild %s: proceeding with channel set (connected=%v)",
-					guildID, player.State().Connected)
+			if player != nil && player.ChannelID() != nil && player.State().Connected {
 				return nil
+			}
+			if voiceEventsReady {
+				return fmt.Errorf("timeout menunggu Lavalink siap mengirim audio (voice events diterima, connected=false)")
 			}
 			return fmt.Errorf("timeout menunggu koneksi voice Lavalink (pastikan bot sudah di voice channel)")
 		case <-ctx.Done():
@@ -613,7 +616,7 @@ func (m *MusicManager) waitForVoice(ctx context.Context, guildID string, sfGuild
 func (m *MusicManager) playTrack(ctx context.Context, guildID snowflake.ID, track lavalink.Track) error {
 	player := m.client.Player(guildID)
 	log.Printf("Playing track in guild %s: %s — %s", guildID, track.Info.Title, track.Info.Author)
-	return player.Update(ctx, lavalink.WithTrack(track), lavalink.WithVolume(100))
+	return player.Update(ctx, lavalink.WithTrack(track), lavalink.WithVolume(100), lavalink.WithPaused(false))
 }
 
 func (m *MusicManager) getPlayer(guildID string) (disgolink.Player, error) {
