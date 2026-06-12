@@ -109,7 +109,20 @@ func (b *Bot) registerCommands() error {
 		},
 		{
 			Name:        "mysongs",
-			Description: "Melihat daftar lagu yang sudah disimpan",
+			Description: "Kelola lagu yang sudah disimpan",
+			Options: []*discordgo.ApplicationCommandOption{
+				{
+					Type:        discordgo.ApplicationCommandOptionString,
+					Name:        "mode",
+					Description: "Pilih aksi untuk playlist tersimpan",
+					Required:    false,
+					Choices: []*discordgo.ApplicationCommandOptionChoice{
+						{Name: "list", Value: "list"},
+						{Name: "play", Value: "play"},
+						{Name: "stopcycle", Value: "stopcycle"},
+					},
+				},
+			},
 		},
 		{
 			Name:        "join",
@@ -195,7 +208,7 @@ func (b *Bot) handleSlashCommand(s *discordgo.Session, i *discordgo.InteractionC
 			})
 			return
 		}
-		
+
 		targetUser := i.ApplicationCommandData().Options[0].UserValue(s)
 		err := b.auth.GrantAccess(context.Background(), targetUser.ID, i.Member.User.ID)
 		if err != nil {
@@ -288,10 +301,27 @@ func (b *Bot) handleSlashCommand(s *discordgo.Session, i *discordgo.InteractionC
 		})
 
 	case "mysongs":
+		mode := "list"
+		if options := i.ApplicationCommandData().Options; len(options) > 0 {
+			mode = options[0].StringValue()
+		}
+
 		if !b.auth.IsAuthorized(context.Background(), i.Member.User.ID) {
 			s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
 				Type: discordgo.InteractionResponseChannelMessageWithSource,
 				Data: &discordgo.InteractionResponseData{Content: "❌ Anda tidak memiliki izin."},
+			})
+			return
+		}
+
+		if mode == "stopcycle" {
+			if b.music != nil {
+				b.music.StopCycle(i.GuildID)
+			}
+
+			s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+				Type: discordgo.InteractionResponseChannelMessageWithSource,
+				Data: &discordgo.InteractionResponseData{Content: "Cycle playlist tersimpan dimatikan."},
 			})
 			return
 		}
@@ -309,6 +339,56 @@ func (b *Bot) handleSlashCommand(s *discordgo.Session, i *discordgo.InteractionC
 			s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
 				Type: discordgo.InteractionResponseChannelMessageWithSource,
 				Data: &discordgo.InteractionResponseData{Content: "📭 Anda belum menyimpan lagu apa pun."},
+			})
+			return
+		}
+
+		if mode == "play" {
+			if b.music == nil {
+				s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+					Type: discordgo.InteractionResponseChannelMessageWithSource,
+					Data: &discordgo.InteractionResponseData{Content: "Sistem musik belum siap."},
+				})
+				return
+			}
+
+			vs, err := s.State.VoiceState(i.GuildID, i.Member.User.ID)
+			if err != nil {
+				s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+					Type: discordgo.InteractionResponseChannelMessageWithSource,
+					Data: &discordgo.InteractionResponseData{Content: "Anda harus berada di voice channel terlebih dahulu."},
+				})
+				return
+			}
+
+			s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+				Type: discordgo.InteractionResponseDeferredChannelMessageWithSource,
+			})
+
+			b.music.ResetVoiceGate(i.GuildID)
+
+			botVS, _ := s.State.VoiceState(i.GuildID, s.State.User.ID)
+			needsJoin := botVS == nil || botVS.ChannelID == "" || botVS.ChannelID != vs.ChannelID
+			if needsJoin {
+				err = s.ChannelVoiceJoinManual(i.GuildID, vs.ChannelID, false, false)
+				if err != nil {
+					s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{
+						Content: stringPtr("Gagal bergabung ke voice channel: " + err.Error()),
+					})
+					return
+				}
+			}
+
+			result, count, err := b.music.StartCycle(context.Background(), i.GuildID, tracks)
+			if err != nil {
+				s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{
+					Content: stringPtr("Gagal memutar playlist tersimpan: " + err.Error()),
+				})
+				return
+			}
+
+			s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{
+				Content: stringPtr(fmt.Sprintf("Memutar %d lagu tersimpan secara cycle. Now playing: %s", count, formatTrack(result.Track))),
 			})
 			return
 		}
@@ -568,8 +648,9 @@ func (b *Bot) handleSlashCommand(s *discordgo.Session, i *discordgo.InteractionC
 
 		queue := b.music.GetQueue(i.GuildID)
 		nowPlaying, _, _ := b.music.GetNowPlaying(i.GuildID)
+		cycle := b.music.GetCycleStatus(i.GuildID)
 
-		if nowPlaying == nil && len(queue) == 0 {
+		if nowPlaying == nil && len(queue) == 0 && !cycle.Enabled {
 			s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
 				Type: discordgo.InteractionResponseChannelMessageWithSource,
 				Data: &discordgo.InteractionResponseData{Content: "📭 Antrian kosong."},
@@ -581,6 +662,9 @@ func (b *Bot) handleSlashCommand(s *discordgo.Session, i *discordgo.InteractionC
 		msg.WriteString("**Antrian Lagu:**\n")
 		if nowPlaying != nil {
 			msg.WriteString(fmt.Sprintf("🎵 **Sedang diputar:** %s\n", formatTrack(*nowPlaying)))
+		}
+		if cycle.Enabled {
+			msg.WriteString(fmt.Sprintf("**Cycle aktif:** %d lagu tersimpan\n", cycle.Count))
 		}
 		for idx, t := range queue {
 			msg.WriteString(fmt.Sprintf("%d. %s\n", idx+1, formatTrack(t)))
