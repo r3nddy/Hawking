@@ -25,6 +25,8 @@ plugins:
     pot:
       token: ${PLUGINS_YOUTUBE_POT_TOKEN:}
       visitorData: ${PLUGINS_YOUTUBE_POT_VISITORDATA:}
+    remoteCipher:
+      url: ${PLUGINS_YOUTUBE_REMOTE_CIPHER_URL:https://cipher.kikkia.dev/}
 
 lavalink:
   plugins:
