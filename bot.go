@@ -120,7 +120,14 @@ func (b *Bot) registerCommands() error {
 						{Name: "list", Value: "list"},
 						{Name: "play", Value: "play"},
 						{Name: "stopcycle", Value: "stopcycle"},
+						{Name: "delete", Value: "delete"},
 					},
+				},
+				{
+					Type:        discordgo.ApplicationCommandOptionInteger,
+					Name:        "id",
+					Description: "ID lagu tersimpan yang akan dihapus",
+					Required:    false,
 				},
 			},
 		},
@@ -302,8 +309,16 @@ func (b *Bot) handleSlashCommand(s *discordgo.Session, i *discordgo.InteractionC
 
 	case "mysongs":
 		mode := "list"
-		if options := i.ApplicationCommandData().Options; len(options) > 0 {
-			mode = options[0].StringValue()
+		var deleteID int
+		hasDeleteID := false
+		for _, option := range i.ApplicationCommandData().Options {
+			switch option.Name {
+			case "mode":
+				mode = option.StringValue()
+			case "id":
+				deleteID = int(option.IntValue())
+				hasDeleteID = true
+			}
 		}
 
 		if !b.auth.IsAuthorized(context.Background(), i.Member.User.ID) {
@@ -322,6 +337,38 @@ func (b *Bot) handleSlashCommand(s *discordgo.Session, i *discordgo.InteractionC
 			s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
 				Type: discordgo.InteractionResponseChannelMessageWithSource,
 				Data: &discordgo.InteractionResponseData{Content: "Cycle playlist tersimpan dimatikan."},
+			})
+			return
+		}
+
+		if mode == "delete" {
+			if !hasDeleteID || deleteID <= 0 {
+				s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+					Type: discordgo.InteractionResponseChannelMessageWithSource,
+					Data: &discordgo.InteractionResponseData{Content: "Masukkan ID lagu yang valid. Contoh: /mysongs mode:delete id:12"},
+				})
+				return
+			}
+
+			deleted, err := b.storage.DeleteTrack(context.Background(), i.Member.User.ID, deleteID)
+			if err != nil {
+				s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+					Type: discordgo.InteractionResponseChannelMessageWithSource,
+					Data: &discordgo.InteractionResponseData{Content: "Gagal menghapus lagu dari Supabase."},
+				})
+				return
+			}
+			if !deleted {
+				s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+					Type: discordgo.InteractionResponseChannelMessageWithSource,
+					Data: &discordgo.InteractionResponseData{Content: "ID lagu tidak ditemukan di playlist kamu."},
+				})
+				return
+			}
+
+			s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+				Type: discordgo.InteractionResponseChannelMessageWithSource,
+				Data: &discordgo.InteractionResponseData{Content: fmt.Sprintf("Lagu dengan ID %d berhasil dihapus dari playlist tersimpan.", deleteID)},
 			})
 			return
 		}
@@ -395,7 +442,7 @@ func (b *Bot) handleSlashCommand(s *discordgo.Session, i *discordgo.InteractionC
 
 		msg := "**Playlist Tersimpan:**\n"
 		for idx, t := range tracks {
-			msg += fmt.Sprintf("%d. **%s** - %s\n", idx+1, t.TrackTitle, t.TrackArtist)
+			msg += fmt.Sprintf("ID %d - **%s** - %s\n", t.ID, t.TrackTitle, t.TrackArtist)
 			if idx >= 9 { // limit 10
 				msg += "...dan lainnya.\n"
 				break

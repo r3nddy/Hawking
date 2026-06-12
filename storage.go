@@ -30,6 +30,21 @@ func (sm *StorageManager) SaveTrack(ctx context.Context, discordID, title, artis
 	return err
 }
 
+func (sm *StorageManager) DeleteTrack(ctx context.Context, discordID string, id int) (bool, error) {
+	result, err := sm.db.ExecContext(ctx,
+		"DELETE FROM saved_tracks WHERE id = $1 AND discord_id = $2",
+		id, discordID)
+	if err != nil {
+		return false, err
+	}
+
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return rows > 0, nil
+}
+
 func (sm *StorageManager) GetTracks(ctx context.Context, discordID string) ([]Track, error) {
 	rows, err := sm.db.QueryContext(ctx,
 		"SELECT id, track_title, track_artist, spotify_url FROM saved_tracks WHERE discord_id = $1 ORDER BY added_at DESC",
