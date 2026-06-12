@@ -16,8 +16,10 @@ Hawking is a modern, lightweight Discord bot crafted in Go. Originally built to 
 | :--------------- | :---------------------- | :----------------------------------------------------------------- |
 | `/jadwal`        | **Public**              | Retrieves and renders the university class schedule.               |
 | `/save [url]`    | **Owner & Whitelisted** | Parses a Spotify track URL, fetches its metadata, and archives it. |
-| `/mysongs`       | **Owner & Whitelisted** | Displays the curated list of saved tracks.                         |
+| `/mysongs`       | **Owner & Whitelisted** | Lists, plays, cycles, and deletes saved tracks.                    |
 | `/grant [user]`  | **Owner Only**          | Grants an individual permissions to use the music commands.        |
 | `/revoke [user]` | **Owner Only**          | Rescinds a user's permission to interact with the music commands.  |
 
 ---
+
+`/mysongs` supports `mode:list`, `mode:play`, `mode:stopcycle`, and `mode:delete id:<saved_track_id>`.
