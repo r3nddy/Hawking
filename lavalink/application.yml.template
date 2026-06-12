@@ -11,12 +11,13 @@ plugins:
     clients:
       - MUSIC
       - TVHTML5_SIMPLY
-      - TVHTML5EMBEDDED
+      - TVHTML5_EMBEDDED
       - ANDROID_MUSIC
       - MWEB
       - ANDROID_VR
       - WEB
-      - WEBEMBEDDED
+      - WEB_EMBEDDED_PLAYER
+      - TV
     oauth:
       enabled: ${PLUGINS_YOUTUBE_OAUTH_ENABLED:false}
       refreshToken: ${PLUGINS_YOUTUBE_OAUTH_REFRESH_TOKEN:}
