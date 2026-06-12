@@ -22,4 +22,4 @@ Hawking is a modern, lightweight Discord bot crafted in Go. Originally built to 
 
 ---
 
-`/mysongs` supports `mode:list`, `mode:play`, `mode:stopcycle`, and `mode:delete id:<saved_track_id>`.
+`/mysongs` supports `mode:list page:<number>`, `mode:play`, `mode:stopcycle`, and `mode:delete id:<saved_track_id>`. List mode is paginated and includes navigation buttons.
