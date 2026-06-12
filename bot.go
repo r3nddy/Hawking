@@ -7,6 +7,7 @@ import (
 	"log"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/bwmarrin/discordgo"
 	"github.com/disgoorg/snowflake/v2"
@@ -183,6 +184,18 @@ func (b *Bot) registerCommands() error {
 		{
 			Name:        "nowplaying",
 			Description: "Tampilkan lagu yang sedang diputar",
+		},
+		{
+			Name:        "clear",
+			Description: "Membersihkan pesan di text chat channel/room ini (maksimal 14 hari terakhir)",
+			Options: []*discordgo.ApplicationCommandOption{
+				{
+					Type:        discordgo.ApplicationCommandOptionInteger,
+					Name:        "jumlah",
+					Description: "Jumlah pesan yang ingin dihapus (1-100, default: 50)",
+					Required:    false,
+				},
+			},
 		},
 	}
 
@@ -797,6 +810,107 @@ func (b *Bot) handleSlashCommand(s *discordgo.Session, i *discordgo.InteractionC
 		s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
 			Type: discordgo.InteractionResponseChannelMessageWithSource,
 			Data: &discordgo.InteractionResponseData{Content: msg},
+		})
+
+	case "clear":
+		if !b.auth.IsAuthorized(context.Background(), i.Member.User.ID) {
+			s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+				Type: discordgo.InteractionResponseChannelMessageWithSource,
+				Data: &discordgo.InteractionResponseData{
+					Content: "❌ Anda tidak memiliki izin untuk menggunakan command ini.",
+					Flags:   discordgo.MessageFlagsEphemeral,
+				},
+			})
+			return
+		}
+
+		amount := 50 // default
+		for _, option := range i.ApplicationCommandData().Options {
+			switch option.Name {
+			case "jumlah":
+				amount = int(option.IntValue())
+			}
+		}
+
+		if amount < 1 {
+			amount = 1
+		} else if amount > 100 {
+			amount = 100
+		}
+
+		// Respon awal secara ephemeral agar tidak membuat channel kotor
+		err := s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+			Type: discordgo.InteractionResponseDeferredChannelMessageWithSource,
+			Data: &discordgo.InteractionResponseData{
+				Flags: discordgo.MessageFlagsEphemeral,
+			},
+		})
+		if err != nil {
+			log.Println("Error responding deferred clear command:", err)
+			return
+		}
+
+		// Mengambil pesan di channel tempat interaksi dipicu
+		messages, err := s.ChannelMessages(i.ChannelID, amount, "", "", "")
+		if err != nil {
+			s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{
+				Content: stringPtr(fmt.Sprintf("❌ Gagal mengambil pesan: %v", err)),
+			})
+			return
+		}
+
+		if len(messages) == 0 {
+			s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{
+				Content: stringPtr("ℹ️ Tidak ada pesan yang ditemukan untuk dibersihkan."),
+			})
+			return
+		}
+
+		// Filter pesan yang usianya < 14 hari
+		limitTime := time.Now().Add(-14 * 24 * time.Hour)
+		var msgIDs []string
+		for _, msg := range messages {
+			ts, err := discordgo.SnowflakeTimestamp(msg.ID)
+			if err != nil {
+				ts = msg.Timestamp
+			}
+			if ts.After(limitTime) {
+				msgIDs = append(msgIDs, msg.ID)
+			}
+		}
+
+		deletedCount := len(msgIDs)
+		if deletedCount == 0 {
+			s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{
+				Content: stringPtr("❌ Tidak ada pesan yang dapat dihapus (semua pesan di channel ini lebih tua dari 14 hari)."),
+			})
+			return
+		}
+
+		// Proses penghapusan
+		if deletedCount == 1 {
+			err = s.ChannelMessageDelete(i.ChannelID, msgIDs[0])
+		} else {
+			err = s.ChannelMessagesBulkDelete(i.ChannelID, msgIDs)
+		}
+
+		if err != nil {
+			s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{
+				Content: stringPtr(fmt.Sprintf("❌ Gagal menghapus pesan: %v (Pastikan bot memiliki izin \"Manage Messages\" / \"Kelola Pesan\")", err)),
+			})
+			return
+		}
+
+		skippedCount := len(messages) - deletedCount
+		var responseMsg string
+		if skippedCount > 0 {
+			responseMsg = fmt.Sprintf("✅ Berhasil membersihkan %d pesan. (%d pesan dilewati karena sudah lebih dari 14 hari).", deletedCount, skippedCount)
+		} else {
+			responseMsg = fmt.Sprintf("✅ Berhasil membersihkan %d pesan.", deletedCount)
+		}
+
+		s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{
+			Content: stringPtr(responseMsg),
 		})
 
 	default:
