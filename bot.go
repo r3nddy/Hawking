@@ -5,11 +5,14 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
+	"strconv"
 	"strings"
 
 	"github.com/bwmarrin/discordgo"
 	"github.com/disgoorg/snowflake/v2"
 )
+
+const mysongsPageSize = 8
 
 type Bot struct {
 	session *discordgo.Session
@@ -129,6 +132,12 @@ func (b *Bot) registerCommands() error {
 					Description: "ID lagu tersimpan yang akan dihapus",
 					Required:    false,
 				},
+				{
+					Type:        discordgo.ApplicationCommandOptionInteger,
+					Name:        "page",
+					Description: "Nomor halaman playlist tersimpan",
+					Required:    false,
+				},
 			},
 		},
 		{
@@ -199,6 +208,15 @@ func (b *Bot) handleMessage(s *discordgo.Session, m *discordgo.MessageCreate) {
 }
 
 func (b *Bot) handleSlashCommand(s *discordgo.Session, i *discordgo.InteractionCreate) {
+	switch i.Type {
+	case discordgo.InteractionMessageComponent:
+		b.handleMessageComponent(s, i)
+		return
+	case discordgo.InteractionApplicationCommand:
+	default:
+		return
+	}
+
 	switch i.ApplicationCommandData().Name {
 	case "jadwal":
 		s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
@@ -309,6 +327,7 @@ func (b *Bot) handleSlashCommand(s *discordgo.Session, i *discordgo.InteractionC
 
 	case "mysongs":
 		mode := "list"
+		page := 1
 		var deleteID int
 		hasDeleteID := false
 		for _, option := range i.ApplicationCommandData().Options {
@@ -318,6 +337,8 @@ func (b *Bot) handleSlashCommand(s *discordgo.Session, i *discordgo.InteractionC
 			case "id":
 				deleteID = int(option.IntValue())
 				hasDeleteID = true
+			case "page":
+				page = int(option.IntValue())
 			}
 		}
 
@@ -369,6 +390,23 @@ func (b *Bot) handleSlashCommand(s *discordgo.Session, i *discordgo.InteractionC
 			s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
 				Type: discordgo.InteractionResponseChannelMessageWithSource,
 				Data: &discordgo.InteractionResponseData{Content: fmt.Sprintf("Lagu dengan ID %d berhasil dihapus dari playlist tersimpan.", deleteID)},
+			})
+			return
+		}
+
+		if mode == "list" {
+			data, err := b.buildMySongsListResponse(context.Background(), i.Member.User.ID, page)
+			if err != nil {
+				s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+					Type: discordgo.InteractionResponseChannelMessageWithSource,
+					Data: &discordgo.InteractionResponseData{Content: "Gagal mengambil playlist dari Supabase."},
+				})
+				return
+			}
+
+			s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+				Type: discordgo.InteractionResponseChannelMessageWithSource,
+				Data: data,
 			})
 			return
 		}
@@ -764,6 +802,176 @@ func (b *Bot) handleSlashCommand(s *discordgo.Session, i *discordgo.InteractionC
 	default:
 		fmt.Println("Unknown command:", i.ApplicationCommandData().Name)
 	}
+}
+
+func (b *Bot) handleMessageComponent(s *discordgo.Session, i *discordgo.InteractionCreate) {
+	data := i.MessageComponentData()
+	if !strings.HasPrefix(data.CustomID, "mysongs:list:") {
+		b.respondEphemeral(s, i, "Tombol tidak dikenali.")
+		return
+	}
+
+	parts := strings.Split(data.CustomID, ":")
+	if len(parts) != 4 {
+		b.respondEphemeral(s, i, "Tombol playlist tidak valid.")
+		return
+	}
+
+	ownerID := parts[2]
+	page, err := strconv.Atoi(parts[3])
+	if err != nil {
+		b.respondEphemeral(s, i, "Halaman playlist tidak valid.")
+		return
+	}
+
+	userID := interactionUserID(i)
+	if userID != ownerID {
+		b.respondEphemeral(s, i, "Tombol ini hanya bisa dipakai oleh pemilik playlist.")
+		return
+	}
+	if !b.auth.IsAuthorized(context.Background(), userID) {
+		b.respondEphemeral(s, i, "Anda tidak memiliki izin.")
+		return
+	}
+
+	responseData, err := b.buildMySongsListResponse(context.Background(), userID, page)
+	if err != nil {
+		b.respondEphemeral(s, i, "Gagal mengambil playlist dari Supabase.")
+		return
+	}
+
+	s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+		Type: discordgo.InteractionResponseUpdateMessage,
+		Data: responseData,
+	})
+}
+
+func (b *Bot) buildMySongsListResponse(ctx context.Context, userID string, page int) (*discordgo.InteractionResponseData, error) {
+	total, err := b.storage.CountTracks(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	if total == 0 {
+		return &discordgo.InteractionResponseData{
+			Content:    "Playlist kamu masih kosong.",
+			Embeds:     []*discordgo.MessageEmbed{},
+			Components: []discordgo.MessageComponent{},
+		}, nil
+	}
+
+	totalPages := (total + mysongsPageSize - 1) / mysongsPageSize
+	page = clampPage(page, totalPages)
+	offset := (page - 1) * mysongsPageSize
+
+	tracks, err := b.storage.GetTracksPage(ctx, userID, mysongsPageSize, offset)
+	if err != nil {
+		return nil, err
+	}
+
+	return &discordgo.InteractionResponseData{
+		Embeds: []*discordgo.MessageEmbed{
+			buildMySongsListEmbed(tracks, page, totalPages, total),
+		},
+		Components: buildMySongsListComponents(userID, page, totalPages),
+	}, nil
+}
+
+func buildMySongsListEmbed(tracks []Track, page, totalPages, total int) *discordgo.MessageEmbed {
+	var description strings.Builder
+	for _, t := range tracks {
+		title := truncateText(cleanTrackText(t.TrackTitle), 80)
+		artist := truncateText(cleanTrackText(t.TrackArtist), 70)
+		if title == "" {
+			title = "-"
+		}
+		if artist == "" {
+			description.WriteString(fmt.Sprintf("`ID %d` **%s**\n", t.ID, title))
+			continue
+		}
+		description.WriteString(fmt.Sprintf("`ID %d` **%s** - %s\n", t.ID, title, artist))
+	}
+
+	return &discordgo.MessageEmbed{
+		Title:       "Playlist Tersimpan",
+		Description: description.String(),
+		Color:       0x5865F2,
+		Footer: &discordgo.MessageEmbedFooter{
+			Text: fmt.Sprintf("Halaman %d/%d | Total %d lagu | Hapus: /mysongs mode:delete id:<ID>", page, totalPages, total),
+		},
+	}
+}
+
+func buildMySongsListComponents(userID string, page, totalPages int) []discordgo.MessageComponent {
+	if totalPages <= 1 {
+		return []discordgo.MessageComponent{}
+	}
+
+	return []discordgo.MessageComponent{
+		discordgo.ActionsRow{
+			Components: []discordgo.MessageComponent{
+				discordgo.Button{
+					Label:    "Previous",
+					Style:    discordgo.SecondaryButton,
+					CustomID: fmt.Sprintf("mysongs:list:%s:%d", userID, page-1),
+					Disabled: page <= 1,
+				},
+				discordgo.Button{
+					Label:    "Next",
+					Style:    discordgo.PrimaryButton,
+					CustomID: fmt.Sprintf("mysongs:list:%s:%d", userID, page+1),
+					Disabled: page >= totalPages,
+				},
+			},
+		},
+	}
+}
+
+func (b *Bot) respondEphemeral(s *discordgo.Session, i *discordgo.InteractionCreate, content string) {
+	s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+		Type: discordgo.InteractionResponseChannelMessageWithSource,
+		Data: &discordgo.InteractionResponseData{
+			Content: content,
+			Flags:   discordgo.MessageFlagsEphemeral,
+		},
+	})
+}
+
+func interactionUserID(i *discordgo.InteractionCreate) string {
+	if i.Member != nil && i.Member.User != nil {
+		return i.Member.User.ID
+	}
+	if i.User != nil {
+		return i.User.ID
+	}
+	return ""
+}
+
+func clampPage(page, totalPages int) int {
+	if page < 1 {
+		return 1
+	}
+	if page > totalPages {
+		return totalPages
+	}
+	return page
+}
+
+func cleanTrackText(text string) string {
+	text = strings.TrimSpace(text)
+	text = strings.ReplaceAll(text, "\n", " ")
+	text = strings.ReplaceAll(text, "\r", " ")
+	return text
+}
+
+func truncateText(text string, maxRunes int) string {
+	runes := []rune(text)
+	if len(runes) <= maxRunes {
+		return text
+	}
+	if maxRunes <= 3 {
+		return string(runes[:maxRunes])
+	}
+	return string(runes[:maxRunes-3]) + "..."
 }
 
 func (b *Bot) handleVoiceStateUpdate(s *discordgo.Session, e *discordgo.VoiceStateUpdate) {

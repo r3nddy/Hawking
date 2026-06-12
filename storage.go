@@ -45,6 +45,38 @@ func (sm *StorageManager) DeleteTrack(ctx context.Context, discordID string, id 
 	return rows > 0, nil
 }
 
+func (sm *StorageManager) CountTracks(ctx context.Context, discordID string) (int, error) {
+	var total int
+	err := sm.db.QueryRowContext(ctx,
+		"SELECT COUNT(*) FROM saved_tracks WHERE discord_id = $1",
+		discordID).Scan(&total)
+	return total, err
+}
+
+func (sm *StorageManager) GetTracksPage(ctx context.Context, discordID string, limit, offset int) ([]Track, error) {
+	rows, err := sm.db.QueryContext(ctx,
+		"SELECT id, track_title, track_artist, spotify_url FROM saved_tracks WHERE discord_id = $1 ORDER BY added_at DESC LIMIT $2 OFFSET $3",
+		discordID, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var tracks []Track
+	for rows.Next() {
+		var t Track
+		if err := rows.Scan(&t.ID, &t.TrackTitle, &t.TrackArtist, &t.SpotifyURL); err != nil {
+			log.Println("Error scanning track row:", err)
+			continue
+		}
+		tracks = append(tracks, t)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return tracks, nil
+}
+
 func (sm *StorageManager) GetTracks(ctx context.Context, discordID string) ([]Track, error) {
 	rows, err := sm.db.QueryContext(ctx,
 		"SELECT id, track_title, track_artist, spotify_url FROM saved_tracks WHERE discord_id = $1 ORDER BY added_at DESC",
@@ -62,6 +94,9 @@ func (sm *StorageManager) GetTracks(ctx context.Context, discordID string) ([]Tr
 			continue
 		}
 		tracks = append(tracks, t)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
 	}
 	return tracks, nil
 }
