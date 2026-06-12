@@ -20,6 +20,11 @@ type PlayResult struct {
 	Track  lavalink.Track
 }
 
+type CycleStatus struct {
+	Enabled bool
+	Count   int
+}
+
 type voiceGate struct {
 	mu     sync.Mutex
 	state  bool
@@ -54,6 +59,8 @@ type MusicManager struct {
 	client      disgolink.Client
 	spotify     *SpotifyManager
 	queues      map[string][]lavalink.Track
+	cycles      map[string][]lavalink.Track
+	cycleIndex  map[string]int
 	mu          sync.Mutex
 	playMu      sync.Mutex
 	playWaiters map[string]chan error
@@ -74,8 +81,10 @@ func NewMusicManager(botUserID string, spotify *SpotifyManager) (*MusicManager, 
 	}
 
 	m := &MusicManager{
-		spotify: spotify,
-		queues:  make(map[string][]lavalink.Track),
+		spotify:    spotify,
+		queues:     make(map[string][]lavalink.Track),
+		cycles:     make(map[string][]lavalink.Track),
+		cycleIndex: make(map[string]int),
 	}
 
 	m.client = disgolink.New(botID,
@@ -177,50 +186,9 @@ func lavalinkVersionSupportsDAVE(version string) bool {
 }
 
 func (m *MusicManager) Play(ctx context.Context, guildID, query string) (*PlayResult, error) {
-	searchQuery, err := m.resolveQuery(ctx, query)
+	track, err := m.ResolveTrack(ctx, query)
 	if err != nil {
 		return nil, err
-	}
-
-	node := m.client.BestNode()
-	if node == nil {
-		return nil, fmt.Errorf("no Lavalink node available")
-	}
-
-	var track lavalink.Track
-	var loaded bool
-	var loadErr error
-
-	node.LoadTracksHandler(ctx, searchQuery, disgolink.NewResultHandler(
-		func(t lavalink.Track) {
-			track = t
-			loaded = true
-		},
-		func(playlist lavalink.Playlist) {
-			if len(playlist.Tracks) > 0 {
-				track = playlist.Tracks[0]
-				loaded = true
-			}
-		},
-		func(tracks []lavalink.Track) {
-			if len(tracks) > 0 {
-				track = tracks[0]
-				loaded = true
-			}
-		},
-		func() {
-			loadErr = fmt.Errorf("no tracks found for: %s", query)
-		},
-		func(err error) {
-			loadErr = err
-		},
-	))
-
-	if loadErr != nil {
-		return nil, loadErr
-	}
-	if !loaded {
-		return nil, fmt.Errorf("no tracks found for: %s", query)
 	}
 
 	sfGuildID, err := snowflake.Parse(guildID)
@@ -248,6 +216,51 @@ func (m *MusicManager) Play(ctx context.Context, guildID, query string) (*PlayRe
 		return nil, err
 	}
 	return &PlayResult{Action: "playing", Track: track}, nil
+}
+
+func (m *MusicManager) StartCycle(ctx context.Context, guildID string, savedTracks []Track) (*PlayResult, int, error) {
+	if len(savedTracks) == 0 {
+		return nil, 0, fmt.Errorf("playlist tersimpan kosong")
+	}
+
+	tracks := make([]lavalink.Track, 0, len(savedTracks))
+	for _, saved := range savedTracks {
+		query := strings.TrimSpace(saved.TrackTitle + " " + saved.TrackArtist)
+		if strings.TrimSpace(query) == "" {
+			query = saved.SpotifyURL
+		}
+
+		track, err := m.ResolveTrack(ctx, query)
+		if err != nil {
+			return nil, len(tracks), fmt.Errorf("gagal resolve %s - %s: %w", saved.TrackTitle, saved.TrackArtist, err)
+		}
+		tracks = append(tracks, track)
+	}
+
+	sfGuildID, err := snowflake.Parse(guildID)
+	if err != nil {
+		return nil, len(tracks), err
+	}
+
+	if err := m.waitForVoice(ctx, guildID, sfGuildID); err != nil {
+		return nil, len(tracks), err
+	}
+
+	m.startCycle(guildID, tracks)
+
+	waitPlayback, cleanup := m.registerPlayWait(guildID)
+	defer cleanup()
+
+	if err := m.playTrack(ctx, sfGuildID, tracks[0]); err != nil {
+		m.StopCycle(guildID)
+		return nil, len(tracks), err
+	}
+	if err := waitPlayback(ctx); err != nil {
+		m.StopCycle(guildID)
+		return nil, len(tracks), err
+	}
+
+	return &PlayResult{Action: "cycle", Track: tracks[0]}, len(tracks), nil
 }
 
 func (m *MusicManager) Pause(ctx context.Context, guildID string) error {
@@ -281,7 +294,7 @@ func (m *MusicManager) Skip(ctx context.Context, guildID string) (*lavalink.Trac
 		return nil, fmt.Errorf("nothing is playing")
 	}
 
-	next := m.nextTrack(guildID)
+	next := m.nextPlayableTrack(guildID)
 	if next == nil {
 		if err := player.Update(ctx, lavalink.WithNullTrack()); err != nil {
 			return nil, err
@@ -297,6 +310,7 @@ func (m *MusicManager) Skip(ctx context.Context, guildID string) (*lavalink.Trac
 
 func (m *MusicManager) Stop(ctx context.Context, guildID string) error {
 	m.clearQueue(guildID)
+	m.StopCycle(guildID)
 
 	sfGuildID, err := snowflake.Parse(guildID)
 	if err != nil {
@@ -316,6 +330,17 @@ func (m *MusicManager) GetQueue(guildID string) []lavalink.Track {
 	return append([]lavalink.Track(nil), m.queues[guildID]...)
 }
 
+func (m *MusicManager) GetCycleStatus(guildID string) CycleStatus {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	cycle := m.cycles[guildID]
+	return CycleStatus{
+		Enabled: len(cycle) > 0,
+		Count:   len(cycle),
+	}
+}
+
 func (m *MusicManager) GetNowPlaying(guildID string) (*lavalink.Track, bool, lavalink.Duration) {
 	sfGuildID, err := snowflake.Parse(guildID)
 	if err != nil {
@@ -332,6 +357,7 @@ func (m *MusicManager) GetNowPlaying(guildID string) (*lavalink.Track, bool, lav
 
 func (m *MusicManager) ClearGuild(guildID string) {
 	m.clearQueue(guildID)
+	m.StopCycle(guildID)
 }
 
 func (m *MusicManager) ResetVoiceGate(guildID string) {
@@ -390,7 +416,7 @@ func (m *MusicManager) onTrackEnd(player disgolink.Player, event lavalink.TrackE
 	}
 
 	guildID := player.GuildID().String()
-	next := m.nextTrack(guildID)
+	next := m.nextPlayableTrack(guildID)
 	if next == nil {
 		return
 	}
@@ -398,6 +424,56 @@ func (m *MusicManager) onTrackEnd(player disgolink.Player, event lavalink.TrackE
 	if err := m.playTrack(context.Background(), player.GuildID(), *next); err != nil {
 		log.Printf("Failed to play next track in guild %s: %v", guildID, err)
 	}
+}
+
+func (m *MusicManager) ResolveTrack(ctx context.Context, query string) (lavalink.Track, error) {
+	searchQuery, err := m.resolveQuery(ctx, query)
+	if err != nil {
+		return lavalink.Track{}, err
+	}
+
+	node := m.client.BestNode()
+	if node == nil {
+		return lavalink.Track{}, fmt.Errorf("no Lavalink node available")
+	}
+
+	var track lavalink.Track
+	var loaded bool
+	var loadErr error
+
+	node.LoadTracksHandler(ctx, searchQuery, disgolink.NewResultHandler(
+		func(t lavalink.Track) {
+			track = t
+			loaded = true
+		},
+		func(playlist lavalink.Playlist) {
+			if len(playlist.Tracks) > 0 {
+				track = playlist.Tracks[0]
+				loaded = true
+			}
+		},
+		func(tracks []lavalink.Track) {
+			if len(tracks) > 0 {
+				track = tracks[0]
+				loaded = true
+			}
+		},
+		func() {
+			loadErr = fmt.Errorf("no tracks found for: %s", query)
+		},
+		func(err error) {
+			loadErr = err
+		},
+	))
+
+	if loadErr != nil {
+		return lavalink.Track{}, loadErr
+	}
+	if !loaded {
+		return lavalink.Track{}, fmt.Errorf("no tracks found for: %s", query)
+	}
+
+	return track, nil
 }
 
 func (m *MusicManager) resolveQuery(ctx context.Context, query string) (string, error) {
@@ -563,6 +639,20 @@ func (m *MusicManager) nextTrack(guildID string) *lavalink.Track {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
+	return m.nextTrackLocked(guildID)
+}
+
+func (m *MusicManager) nextPlayableTrack(guildID string) *lavalink.Track {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if track := m.nextTrackLocked(guildID); track != nil {
+		return track
+	}
+	return m.nextCycleTrackLocked(guildID)
+}
+
+func (m *MusicManager) nextTrackLocked(guildID string) *lavalink.Track {
 	queue := m.queues[guildID]
 	if len(queue) == 0 {
 		return nil
@@ -570,6 +660,39 @@ func (m *MusicManager) nextTrack(guildID string) *lavalink.Track {
 
 	track := queue[0]
 	m.queues[guildID] = queue[1:]
+	return &track
+}
+
+func (m *MusicManager) startCycle(guildID string, tracks []lavalink.Track) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	m.queues[guildID] = nil
+	m.cycles[guildID] = append([]lavalink.Track(nil), tracks...)
+	m.cycleIndex[guildID] = 1
+}
+
+func (m *MusicManager) StopCycle(guildID string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	delete(m.cycles, guildID)
+	delete(m.cycleIndex, guildID)
+}
+
+func (m *MusicManager) nextCycleTrackLocked(guildID string) *lavalink.Track {
+	cycle := m.cycles[guildID]
+	if len(cycle) == 0 {
+		return nil
+	}
+
+	idx := m.cycleIndex[guildID]
+	if idx < 0 || idx >= len(cycle) {
+		idx = 0
+	}
+
+	track := cycle[idx]
+	m.cycleIndex[guildID] = (idx + 1) % len(cycle)
 	return &track
 }
 
