@@ -26,9 +26,12 @@ func Load() *Config {
 		log.Fatal("DISCORD_TOKEN not found in environment variables")
 	}
 
-	dbUrl := os.Getenv("SUPABASE_DB_URL")
+	dbUrl := os.Getenv("DATABASE_URL")
 	if dbUrl == "" {
-		log.Fatal("SUPABASE_DB_URL not found in environment variables")
+		dbUrl = os.Getenv("SUPABASE_DB_URL")
+	}
+	if dbUrl == "" {
+		log.Fatal("DATABASE_URL or SUPABASE_DB_URL not found in environment variables")
 	}
 
 	spotifyID := os.Getenv("SPOTIFY_CLIENT_ID")
