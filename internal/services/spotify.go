@@ -1,4 +1,4 @@
-package main
+package services
 
 import (
 	"context"
@@ -7,7 +7,6 @@ import (
 	"io"
 	"log"
 	"net/http"
-	"os"
 	"regexp"
 	"strings"
 
@@ -16,24 +15,14 @@ import (
 	"golang.org/x/oauth2/clientcredentials"
 )
 
-type SpotifyManager struct {
+type SpotifyService struct {
 	client *spotify.Client
 }
 
-func NewSpotifyManager() *SpotifyManager {
-	clientID := os.Getenv("SPOTIFY_CLIENT_ID")
-	if clientID == "" {
-		clientID = os.Getenv("SPOTIFY_ID")
-	}
-
-	clientSecret := os.Getenv("SPOTIFY_CLIENT_SECRET")
-	if clientSecret == "" {
-		clientSecret = os.Getenv("SPOTIFY_SECRET")
-	}
-
+func NewSpotifyService(clientID, clientSecret string) *SpotifyService {
 	if clientID == "" || clientSecret == "" {
 		log.Println("Spotify credentials not fully set, API client disabled (will use scraper fallback)")
-		return &SpotifyManager{client: nil}
+		return &SpotifyService{client: nil}
 	}
 
 	ctx := context.Background()
@@ -46,20 +35,20 @@ func NewSpotifyManager() *SpotifyManager {
 	token, err := config.Token(ctx)
 	if err != nil {
 		log.Println("Failed to obtain Spotify token, API client disabled (will use scraper fallback):", err)
-		return &SpotifyManager{client: nil}
+		return &SpotifyService{client: nil}
 	}
 
 	httpClient := spotifyauth.New().Client(ctx, token)
 	client := spotify.New(httpClient)
 
 	log.Println("Spotify API client successfully initialized")
-	return &SpotifyManager{client: client}
+	return &SpotifyService{client: client}
 }
 
-func (sm *SpotifyManager) GetTrackInfo(ctx context.Context, trackID string) (string, string, error) {
-	if sm.client != nil {
+func (s *SpotifyService) GetTrackInfo(ctx context.Context, trackID string) (string, string, error) {
+	if s.client != nil {
 		id := spotify.ID(trackID)
-		track, err := sm.client.GetTrack(ctx, id)
+		track, err := s.client.GetTrack(ctx, id)
 		if err == nil {
 			artistName := ""
 			if len(track.Artists) > 0 {
@@ -70,10 +59,10 @@ func (sm *SpotifyManager) GetTrackInfo(ctx context.Context, trackID string) (str
 		log.Println("Spotify API error (possibly Premium restrictions), falling back to scraping:", err)
 	}
 
-	return sm.GetTrackInfoScrape(ctx, trackID)
+	return s.GetTrackInfoScrape(ctx, trackID)
 }
 
-func (sm *SpotifyManager) GetTrackInfoScrape(ctx context.Context, trackID string) (string, string, error) {
+func (s *SpotifyService) GetTrackInfoScrape(ctx context.Context, trackID string) (string, string, error) {
 	url := "https://open.spotify.com/track/" + trackID
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
