@@ -50,7 +50,12 @@ func Run() {
 	}
 	defer client.Close()
 
-	musicSvc, err := services.NewMusicService(client.Session.State.User.ID, spotifySvc)
+	botUser, err := client.Session.User("@me")
+	if err != nil {
+		log.Fatal("Error fetching bot user info: ", err)
+	}
+
+	musicSvc, err := services.NewMusicService(botUser.ID, spotifySvc)
 	if err != nil {
 		log.Fatal("Error creating music service: ", err)
 	}
