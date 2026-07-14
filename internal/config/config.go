@@ -13,6 +13,7 @@ type Config struct {
 	SpotifyID     string
 	SpotifySecret string
 	OwnerID       string
+	GuildID       string
 }
 
 func Load() *Config {
@@ -49,11 +50,14 @@ func Load() *Config {
 		log.Println("Warning: OWNER_ID is not set in environment variables. Bot owner commands will not work.")
 	}
 
+	guildID := os.Getenv("GUILD_ID")
+
 	return &Config{
 		DiscordToken:  token,
 		DatabaseURL:   dbUrl,
 		SpotifyID:     spotifyID,
 		SpotifySecret: spotifySecret,
 		OwnerID:       ownerID,
+		GuildID:       guildID,
 	}
 }
