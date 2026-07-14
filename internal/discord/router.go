@@ -8,15 +8,17 @@ import (
 type CommandHandler func(s *discordgo.Session, i *discordgo.InteractionCreate)
 
 type Router struct {
-	commands map[string]CommandHandler
-	components map[string]CommandHandler
+	commands    map[string]CommandHandler
+	components  map[string]CommandHandler
 	appCommands []*discordgo.ApplicationCommand
+	guildID     string
 }
 
-func NewRouter() *Router {
+func NewRouter(guildID string) *Router {
 	return &Router{
-		commands: make(map[string]CommandHandler),
+		commands:   make(map[string]CommandHandler),
 		components: make(map[string]CommandHandler),
+		guildID:    guildID,
 	}
 }
 
@@ -30,13 +32,12 @@ func (r *Router) RegisterComponent(customIDPrefix string, handler CommandHandler
 }
 
 func (r *Router) RegisterCommands(s *discordgo.Session) error {
-	for _, v := range r.appCommands {
-		_, err := s.ApplicationCommandCreate(s.State.User.ID, "", v)
-		if err != nil {
-			log.Printf("Cannot create '%v' command: %v", v.Name, err)
-		}
+	_, err := s.ApplicationCommandBulkOverwrite(s.State.User.ID, r.guildID, r.appCommands)
+	if err != nil {
+		log.Printf("Cannot overwrite commands: %v", err)
+		return err
 	}
-	log.Println("Slash commands berhasil didaftarkan")
+	log.Println("Slash commands berhasil didaftarkan (Bulk Overwrite)")
 	return nil
 }
 

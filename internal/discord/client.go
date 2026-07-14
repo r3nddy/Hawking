@@ -1,9 +1,11 @@
 package discord
 
 import (
-
+	"context"
+	"log"
 
 	"github.com/bwmarrin/discordgo"
+	"github.com/disgoorg/snowflake/v2"
 	"hawking-bot/internal/services"
 )
 
@@ -69,13 +71,44 @@ func (c *Client) handleSlashCommand(s *discordgo.Session, i *discordgo.Interacti
 }
 
 func (c *Client) handleVoiceStateUpdate(s *discordgo.Session, e *discordgo.VoiceStateUpdate) {
-	if c.music != nil {
-		c.music.NotifyVoiceState(e.GuildID)
+	if c.music == nil {
+		return
 	}
+
+	log.Printf("[voice] VoiceStateUpdate: user=%s channel=%s session=%s", e.UserID, e.ChannelID, e.SessionID)
+
+	// Forward bot's own voice state to Lavalink (disgolink)
+	if e.UserID == s.State.User.ID {
+		sfGuild, _ := snowflake.Parse(e.GuildID)
+		var channelID *snowflake.ID
+		if e.ChannelID != "" {
+			id := snowflake.MustParse(e.ChannelID)
+			channelID = &id
+		}
+		client := c.music.Client()
+		if client != nil {
+			log.Printf("[voice] Forwarding OnVoiceStateUpdate to disgolink: guild=%s channel=%s session=%s", e.GuildID, e.ChannelID, e.SessionID)
+			client.OnVoiceStateUpdate(context.Background(), sfGuild, channelID, e.SessionID)
+		}
+	}
+
+	c.music.NotifyVoiceState(e.GuildID)
 }
 
 func (c *Client) handleVoiceServerUpdate(s *discordgo.Session, e *discordgo.VoiceServerUpdate) {
-	if c.music != nil {
-		c.music.NotifyVoiceServer(e.GuildID)
+	if c.music == nil {
+		return
 	}
+
+	log.Printf("[voice] VoiceServerUpdate: guild=%s endpoint=%s token=%s", e.GuildID, e.Endpoint, e.Token)
+
+	// Forward voice server update (token & endpoint) to Lavalink (disgolink)
+	sfGuild, _ := snowflake.Parse(e.GuildID)
+	client := c.music.Client()
+	if client != nil {
+		log.Printf("[voice] Forwarding OnVoiceServerUpdate to disgolink: guild=%s endpoint=%s", e.GuildID, e.Endpoint)
+		client.OnVoiceServerUpdate(context.Background(), sfGuild, e.Token, e.Endpoint)
+	}
+
+	c.music.NotifyVoiceServer(e.GuildID)
 }

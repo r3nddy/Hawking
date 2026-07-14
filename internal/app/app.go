@@ -42,7 +42,7 @@ func Run() {
 	spotifySvc := services.NewSpotifyService(cfg.SpotifyID, cfg.SpotifySecret)
 
 	// Discord Router & Client
-	router := discord.NewRouter()
+	router := discord.NewRouter(cfg.GuildID)
 	
 	client, err := discord.NewClient(cfg.DiscordToken, router)
 	if err != nil {
