@@ -1,12 +1,31 @@
 {
   "extends": [
-    "config:base",
+    "config:recommended",
     ":timezone(Asia/Jakarta)"
   ],
+  "schedule": ["at any time"],
+  "prConcurrentLimit": 5,
+  "prHourlyLimit": 0,
+  "golang": {
+    "enabled": true
+  },
+  "postUpdateOptions": ["gomodTidy"],
   "packageRules": [
     {
+      "matchManagers": ["gomod"],
       "matchUpdateTypes": ["minor", "patch"],
-      "automerge": true
+      "automerge": false,
+      "groupName": "Go dependencies (non-major)"
+    },
+    {
+      "matchManagers": ["gomod"],
+      "matchUpdateTypes": ["major"],
+      "automerge": false,
+      "groupName": "Go dependencies (major)"
     }
-  ]
+  ],
+  "vulnerabilityAlerts": {
+    "enabled": true,
+    "labels": ["security"]
+  }
 }
