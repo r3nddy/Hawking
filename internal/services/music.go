@@ -148,7 +148,7 @@ func (m *MusicService) connectNode(ctx context.Context, cfg disgolink.NodeConfig
 
 	log.Printf("Lavalink node %s: v%s (via %s)", cfg.Name, version, source)
 
-	if !lavalinkVersionSupportsDAVE(version) {
+	if !lavalinkVersionSupportsDAVE(ctx, node) {
 		m.client.RemoveNode(cfg.Name)
 		return fmt.Errorf("v%s tidak support DAVE (butuh Lavalink 4.2.0+)", version)
 	}
@@ -175,7 +175,22 @@ func getNodeVersion(ctx context.Context, node disgolink.Node) (string, string, e
 	return fmt.Sprintf("%d.%d.%d", info.Version.Major, info.Version.Minor, info.Version.Patch), "info", nil
 }
 
-func lavalinkVersionSupportsDAVE(version string) bool {
+func lavalinkVersionSupportsDAVE(ctx context.Context, node disgolink.Node) bool {
+	// Coba pakai node.Info() karena punya Major/Minor structured integer
+	// (tidak tergantung string parsing yang bisa gagal buat SNAPSHOT builds)
+	info, err := node.Info(ctx)
+	if err == nil {
+		major := info.Version.Major
+		minor := info.Version.Minor
+		return major > 4 || (major == 4 && minor >= 2)
+	}
+
+	// Fallback: parse string version (untuk node yang tidak support Info endpoint)
+	version, err := node.Version(ctx)
+	if err != nil {
+		return false
+	}
+
 	version = strings.TrimSpace(strings.TrimPrefix(version, "v"))
 	parts := strings.Split(version, ".")
 	if len(parts) < 2 {
