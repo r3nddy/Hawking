@@ -4,6 +4,7 @@
     ":timezone(Asia/Jakarta)"
   ],
   "postUpdateOptions": ["gomodTidy"],
+  "dependencyDashboard": false,
   "packageRules": [
     {
       "matchManagers": ["gomod"],
