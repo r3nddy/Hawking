@@ -1,6 +1,3 @@
-[service]
-name = "lavalink"
-
 [build]
 builder = "DOCKERFILE"
 dockerfilePath = "Dockerfile"
@@ -8,7 +5,3 @@ dockerfilePath = "Dockerfile"
 [deploy]
 restartPolicyType = "ON_FAILURE"
 numReplicas = 1
-
-[env]
-LAVALINK_PASSWORD = "youshallnotpass"
-PORT = "2333"
