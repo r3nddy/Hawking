@@ -1,0 +1,27 @@
+# Build artifacts
+.git
+.gitignore
+README.md
+
+# Local development
+.env
+.env.local
+.dockerignore
+Makefile
+
+# IDE
+.vscode
+.idea
+*.swp
+*.swo
+
+# Test
+*_test.go
+go.mod~
+
+# Lavalink (deploy terpisah)
+lavalink/
+
+# Build cache
+bin/
+dist/
