@@ -1,0 +1,59 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: hawking-postgres
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: hawking
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-RETRY", "pg_isready", "-U", "postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  lavalink:
+    build:
+      context: ./lavalink
+      dockerfile: Dockerfile
+    container_name: hawking-lavalink
+    ports:
+      - "2333:2333"
+    environment:
+      LAVALINK_PASSWORD: youshallnotpass
+      PORT: 2333
+    healthcheck:
+      test: ["CMD-RETRY", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:2333/version"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  bot:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: hawking-bot
+    depends_on:
+      postgres:
+        condition: service_healthy
+      lavalink:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://postgres:postgres@postgres:5432/hawking?sslmode=disable
+      DISCORD_TOKEN: ${DISCORD_TOKEN}
+      GUILD_ID: ${GUILD_ID}
+      OWNER_ID: ${OWNER_ID}
+      SPOTIFY_CLIENT_ID: ${SPOTIFY_CLIENT_ID}
+      SPOTIFY_CLIENT_SECRET: ${SPOTIFY_CLIENT_SECRET}
+      LAVALINK_HOST: lavalink:2333
+      LAVALINK_PASSWORD: youshallnotpass
+    restart: on-failure
+
+volumes:
+  postgres_data:
