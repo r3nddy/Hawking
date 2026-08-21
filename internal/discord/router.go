@@ -1,8 +1,8 @@
 package discord
 
 import (
-	"log"
 	"github.com/bwmarrin/discordgo"
+	"log"
 )
 
 type CommandHandler func(s *discordgo.Session, i *discordgo.InteractionCreate)

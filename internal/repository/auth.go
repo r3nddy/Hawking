@@ -27,8 +27,8 @@ func (ar *AuthRepository) IsAuthorized(ctx context.Context, userID string) bool 
 }
 
 func (ar *AuthRepository) GrantAccess(ctx context.Context, targetUserID, grantedBy string) error {
-	_, err := ar.DB.ExecContext(ctx, 
-		"INSERT INTO authorized_users (discord_id, granted_by, granted_at) VALUES ($1, $2, NOW()) ON CONFLICT (discord_id) DO NOTHING", 
+	_, err := ar.DB.ExecContext(ctx,
+		"INSERT INTO authorized_users (discord_id, granted_by, granted_at) VALUES ($1, $2, NOW()) ON CONFLICT (discord_id) DO NOTHING",
 		targetUserID, grantedBy)
 	return err
 }

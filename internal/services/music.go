@@ -734,4 +734,3 @@ func formatDuration(d lavalink.Duration) string {
 	sec := totalSec % 60
 	return fmt.Sprintf("%d:%02d", min, sec)
 }
-

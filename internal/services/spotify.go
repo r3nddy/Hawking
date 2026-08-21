@@ -109,11 +109,11 @@ func (s *SpotifyService) GetTrackInfoScrape(ctx context.Context, trackID string)
 
 	if len(descMatches) >= 2 {
 		desc := html.UnescapeString(descMatches[1])
-		
+
 		parts := strings.Split(desc, " · ")
 		if len(parts) >= 1 {
 			artist = parts[0]
-			
+
 			if strings.Contains(artist, "on Spotify.") {
 				subParts := strings.Split(artist, "on Spotify. ")
 				if len(subParts) > 1 {

@@ -41,3 +41,55 @@ lavalink/application.yml
 lavalink/plugins/
 lavalink/*.log
 lavalink/*.db
+
+# Bot compiled binaries (specific to this project)
+bot.exe
+hawking-bot.exe
+/cmd/bot/bot
+/cmd/bot/bot.exe
+
+# Tools compiled binaries
+tools/*/main
+tools/*/main.exe
+tools/*/*.exe
+tools/*/test
+tools/*/test.exe
+
+# PowerShell scripts output
+*.ps1.log
+
+# Development helper scripts (local only)
+clear-env.ps1
+
+# Database files (if using local SQLite for testing)
+*.db
+*.sqlite
+*.sqlite3
+
+# Log files
+*.log
+logs/
+
+# Temporary files
+*.tmp
+*.temp
+*~
+.*.swp
+
+# Claude Code session files
+.claude/
+*.claude.md
+
+# Documentation build artifacts (if using any doc generators)
+docs/_build/
+docs/.doctrees/
+
+# Coverage reports
+coverage.txt
+coverage.html
+*.cover
+
+# Debug files
+debug
+debug.test
+__debug_bin
