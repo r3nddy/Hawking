@@ -1,6 +1,8 @@
 package handlers
 
 import (
+	"context"
+
 	"github.com/bwmarrin/discordgo"
 	"hawking-bot/internal/discord"
 	"hawking-bot/internal/services"
@@ -12,7 +14,7 @@ type JadwalHandler struct {
 
 func NewJadwalHandler(svc *services.JadwalService, router *discord.Router) *JadwalHandler {
 	h := &JadwalHandler{svc: svc}
-	
+
 	router.Register(&discordgo.ApplicationCommand{
 		Name:        "jadwal",
 		Description: "Tampilkan jadwal kuliah kelas B 25",
@@ -22,10 +24,11 @@ func NewJadwalHandler(svc *services.JadwalService, router *discord.Router) *Jadw
 }
 
 func (h *JadwalHandler) HandleJadwal(s *discordgo.Session, i *discordgo.InteractionCreate) {
+	ctx := context.Background()
 	s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
 		Type: discordgo.InteractionResponseChannelMessageWithSource,
 		Data: &discordgo.InteractionResponseData{
-			Content: h.svc.GetFormattedJadwal(),
+			Content: h.svc.GetFormattedJadwal(ctx),
 		},
 	})
 }

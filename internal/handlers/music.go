@@ -488,8 +488,8 @@ func (h *MusicHandler) HandleNowPlaying(s *discordgo.Session, i *discordgo.Inter
 	if paused {
 		status = "⏸️ Paused"
 	}
-	
-	msg := fmt.Sprintf("%s\n🎵 **%s** — %s\n⏳ Posisi: %s", 
+
+	msg := fmt.Sprintf("%s\n🎵 **%s** — %s\n⏳ Posisi: %s",
 		status, track.Info.Title, track.Info.Author, position.String())
 	respond(s, i, msg)
 }
