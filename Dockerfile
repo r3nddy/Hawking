@@ -19,7 +19,7 @@ RUN apk add --no-cache ca-certificates tzdata
 
 WORKDIR /app
 
-COPY --from=builder /hawking-bot /hawking-bot
+COPY --from=builder /hawking-bot ./hawking-bot
 COPY --from=builder /app/migrations ./migrations
 
-ENTRYPOINT ["/hawking-bot"]
+ENTRYPOINT ["./hawking-bot"]
