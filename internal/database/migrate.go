@@ -4,6 +4,8 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
+	"os"
+	"path/filepath"
 
 	"github.com/golang-migrate/migrate/v4"
 	"github.com/golang-migrate/migrate/v4/database/postgres"
@@ -18,9 +20,23 @@ func RunMigrations(db *sql.DB, migrationsPath string) error {
 		return fmt.Errorf("could not create postgres driver: %w", err)
 	}
 
-	// Buat migrate instance dari folder migrations
+	// Resolve absolute path untuk migrations
+	absPath, err := filepath.Abs(migrationsPath)
+	if err != nil {
+		return fmt.Errorf("could not resolve migrations path: %w", err)
+	}
+
+	// Cek apakah direktori migrations ada
+	if _, err := os.Stat(absPath); os.IsNotExist(err) {
+		return fmt.Errorf("migrations directory does not exist: %s", absPath)
+	}
+
+	log.Printf("Loading migrations from: %s", absPath)
+
+	// Buat migrate instance dari folder migrations dengan absolute path
+	sourceURL := fmt.Sprintf("file://%s", filepath.ToSlash(absPath))
 	m, err := migrate.NewWithDatabaseInstance(
-		fmt.Sprintf("file://%s", migrationsPath),
+		sourceURL,
 		"postgres",
 		driver,
 	)
