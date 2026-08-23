@@ -23,7 +23,7 @@ import (
 func Run() {
 	cfg := config.Load()
 
-	db, err := sql.Open("postgres", cfg.DatabaseURL)
+	db, err := sql.Open("pgx", cfg.DatabaseURL)
 	if err != nil {
 		log.Fatal("Error opening database connection: ", err)
 	}
