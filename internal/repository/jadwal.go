@@ -105,9 +105,8 @@ func (r *JadwalRepository) GetByHari(ctx context.Context, hari string) ([]models
 	return listJadwal, rows.Err()
 }
 
-// GetScheduleForTomorrow mengambil jadwal untuk besok (untuk reminder)
-func (r *JadwalRepository) GetScheduleForTomorrow(ctx context.Context) ([]models.Jadwal, error) {
-	tomorrow := time.Now().Add(24 * time.Hour)
+// GetScheduleForDate mengambil jadwal aktif untuk tanggal tertentu.
+func (r *JadwalRepository) GetScheduleForDate(ctx context.Context, date time.Time) ([]models.Jadwal, error) {
 	hariIndonesia := map[time.Weekday]string{
 		time.Monday:    "Senin",
 		time.Tuesday:   "Selasa",
@@ -118,8 +117,12 @@ func (r *JadwalRepository) GetScheduleForTomorrow(ctx context.Context) ([]models
 		time.Sunday:    "Minggu",
 	}
 
-	hari := hariIndonesia[tomorrow.Weekday()]
-	return r.GetByHari(ctx, hari)
+	return r.GetByHari(ctx, hariIndonesia[date.Weekday()])
+}
+
+// GetScheduleForTomorrow mengambil jadwal untuk besok (untuk reminder)
+func (r *JadwalRepository) GetScheduleForTomorrow(ctx context.Context) ([]models.Jadwal, error) {
+	return r.GetScheduleForDate(ctx, time.Now().AddDate(0, 0, 1))
 }
 
 // Create menambahkan jadwal baru
