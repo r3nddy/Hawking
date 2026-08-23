@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
 
@@ -82,17 +83,21 @@ func Run() {
 		log.Fatal("Error connecting discord client: ", err)
 	}
 
-	// Connect Music Service
-	if err := musicSvc.Connect(context.Background()); err != nil {
-		log.Fatal("Error connecting lavalink: ", err)
-	}
-
-	// Start Reminder Scheduler
+	// Start Reminder Scheduler independently from the optional music service.
 	reminderScheduler := scheduler.NewReminderScheduler(reminderSvc)
 	if err := reminderScheduler.Start(); err != nil {
 		log.Fatal("Error starting reminder scheduler: ", err)
 	}
 	defer reminderScheduler.Stop()
+
+	// Connect Lavalink asynchronously so music availability cannot block reminders.
+	musicCtx, cancelMusic := context.WithTimeout(context.Background(), 15*time.Second)
+	go func() {
+		defer cancelMusic()
+		if err := musicSvc.Connect(musicCtx); err != nil {
+			log.Printf("Warning: Lavalink unavailable; music features disabled: %v", err)
+		}
+	}()
 
 	fmt.Println("Bot is Running! (Modular Monolith)")
 	fmt.Printf("Next reminder check: %s\n", reminderScheduler.GetNextRun().Format("2006-01-02 15:04:05"))

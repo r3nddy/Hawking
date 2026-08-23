@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"strings"
 	"time"
 
 	"hawking-bot/internal/models"
@@ -36,10 +37,12 @@ func (t *TestScheduler) SimulateReminderCheck() error {
 		getDayInIndonesian(tomorrow.Weekday()),
 	)
 
-	err := t.reminderSvc.CheckAndSendReminders(ctx)
+	result, err := t.reminderSvc.CheckAndSendReminders(ctx)
 	if err != nil {
 		return fmt.Errorf("error saat simulasi: %w", err)
 	}
+	log.Printf("Hasil: %d config aktif, %d jadwal, %d pesan terkirim, %d dilewati",
+		result.ActiveConfigs, result.SchedulesFound, result.MessagesSent, result.Skipped)
 
 	log.Println("=== SIMULASI SELESAI ===")
 	return nil
@@ -58,10 +61,10 @@ func (t *TestScheduler) TestFormatMessage(schedules []models.Jadwal) string {
 }
 
 func formatTestMessage(schedules []models.Jadwal, reminderDate time.Time) string {
-	var message string
+	var builder strings.Builder
 
-	message += "@everyone\n\n"
-	message += "🔔 **REMINDER JADWAL KULIAH BESOK** 🔔\n\n"
+	builder.WriteString("@everyone\n\n")
+	builder.WriteString("🔔 **REMINDER JADWAL KULIAH BESOK** 🔔\n\n")
 
 	days := map[time.Weekday]string{
 		time.Monday:    "Senin",
@@ -89,29 +92,29 @@ func formatTestMessage(schedules []models.Jadwal, reminderDate time.Time) string
 	}
 
 	hari := days[reminderDate.Weekday()]
-	message += fmt.Sprintf("📅 **%s, %d %s %d**\n\n",
+	fmt.Fprintf(&builder, "📅 **%s, %d %s %d**\n\n",
 		hari,
 		reminderDate.Day(),
 		months[reminderDate.Month()],
 		reminderDate.Year(),
 	)
 
-	message += "**Mata Kuliah:**\n"
+	builder.WriteString("**Mata Kuliah:**\n")
 	for i, schedule := range schedules {
 		waktuMulai := schedule.WaktuMulai.Format("15:04")
 		waktuSelesai := schedule.WaktuSelesai.Format("15:04")
 
-		message += fmt.Sprintf("\n**%d. %s** (%d SKS)\n", i+1, schedule.MatKul, schedule.SKS)
-		message += fmt.Sprintf("   ⏰ %s - %s\n", waktuMulai, waktuSelesai)
-		message += fmt.Sprintf("   📍 %s\n", schedule.Ruang)
-		message += fmt.Sprintf("   👨‍🏫 %s\n", schedule.Dosen)
+		fmt.Fprintf(&builder, "\n**%d. %s** (%d SKS)\n", i+1, schedule.MatKul, schedule.SKS)
+		fmt.Fprintf(&builder, "   ⏰ %s - %s\n", waktuMulai, waktuSelesai)
+		fmt.Fprintf(&builder, "   📍 %s\n", schedule.Ruang)
+		fmt.Fprintf(&builder, "   👨‍🏫 %s\n", schedule.Dosen)
 	}
 
-	message += "\n💡 **Tips:** Siapkan bahan kuliah dari malam ini ya!\n"
-	message += "📚 Jangan lupa cek tugas dan materi yang perlu dibawa.\n\n"
-	message += "_Semangat kuliahnya! 🎓_"
+	builder.WriteString("\n💡 **Tips:** Siapkan bahan kuliah dari malam ini ya!\n")
+	builder.WriteString("📚 Jangan lupa cek tugas dan materi yang perlu dibawa.\n\n")
+	builder.WriteString("_Semangat kuliahnya! 🎓_")
 
-	return message
+	return builder.String()
 }
 
 func getDayInIndonesian(day time.Weekday) string {

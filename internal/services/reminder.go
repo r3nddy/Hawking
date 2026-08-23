@@ -2,6 +2,7 @@ package services
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"hawking-bot/internal/models"
 	"hawking-bot/internal/repository"
@@ -29,111 +30,108 @@ func NewReminderService(
 	}
 }
 
-// CheckAndSendReminders memeriksa jadwal besok dan mengirim reminder jika belum dikirim
-func (s *ReminderService) CheckAndSendReminders(ctx context.Context) error {
-	// Ambil semua konfigurasi aktif
+type ReminderCheckResult struct {
+	ActiveConfigs  int
+	SchedulesFound int
+	MessagesSent   int
+	Skipped        int
+	Failures       []string
+}
+
+// CheckAndSendReminders memeriksa jadwal sesuai konfigurasi dan mengirim reminder.
+func (s *ReminderService) CheckAndSendReminders(ctx context.Context) (*ReminderCheckResult, error) {
 	configs, err := s.reminderRepo.GetAllActiveConfigs(ctx)
 	if err != nil {
-		return fmt.Errorf("gagal mengambil konfigurasi: %w", err)
+		return nil, fmt.Errorf("gagal mengambil konfigurasi: %w", err)
 	}
 
-	if len(configs) == 0 {
-		return nil // Tidak ada konfigurasi aktif
-	}
-
-	// Ambil jadwal untuk besok
-	schedules, err := s.jadwalRepo.GetScheduleForTomorrow(ctx)
-	if err != nil {
-		return fmt.Errorf("gagal mengambil jadwal besok: %w", err)
-	}
-
-	if len(schedules) == 0 {
-		return nil // Tidak ada jadwal besok
-	}
-
-	tomorrow := time.Now().Add(24 * time.Hour)
-	reminderDate := time.Date(tomorrow.Year(), tomorrow.Month(), tomorrow.Day(), 0, 0, 0, 0, time.Local)
-
-	// Kirim reminder untuk setiap konfigurasi aktif
+	result := &ReminderCheckResult{ActiveConfigs: len(configs)}
 	for _, config := range configs {
-		if err := s.sendReminderForConfig(ctx, config, schedules, reminderDate); err != nil {
-			// Log error tapi lanjutkan untuk config lain
-			fmt.Printf("Error sending reminder for guild %s: %v\n", config.GuildID, err)
+		reminderDate := time.Now().AddDate(0, 0, config.DaysBefore)
+		reminderDate = time.Date(reminderDate.Year(), reminderDate.Month(), reminderDate.Day(), 0, 0, 0, 0, time.Local)
+
+		schedules, err := s.jadwalRepo.GetScheduleForDate(ctx, reminderDate)
+		if err != nil {
+			return nil, fmt.Errorf("gagal mengambil jadwal untuk guild %s: %w", config.GuildID, err)
+		}
+		result.SchedulesFound += len(schedules)
+		if len(schedules) == 0 {
+			continue
+		}
+
+		sent, skipped, err := s.sendReminderForConfig(ctx, config, schedules, reminderDate)
+		if err != nil {
+			result.Failures = append(result.Failures, fmt.Sprintf("guild %s: %v", config.GuildID, err))
+			continue
+		}
+		if sent {
+			result.MessagesSent++
+		}
+		if skipped {
+			result.Skipped++
 		}
 	}
 
-	return nil
+	if len(result.Failures) > 0 {
+		return result, errors.New(strings.Join(result.Failures, "; "))
+	}
+	return result, nil
 }
 
-// sendReminderForConfig mengirim reminder untuk satu guild/channel
+// sendReminderForConfig mengirim reminder untuk satu guild/channel.
 func (s *ReminderService) sendReminderForConfig(
 	ctx context.Context,
 	config models.ReminderConfig,
 	schedules []models.Jadwal,
 	reminderDate time.Time,
-) error {
-	// Cek apakah sudah ada reminder yang dikirim untuk jadwal ini
+) (sent bool, skipped bool, err error) {
 	alreadySent := make(map[int]bool)
 	for _, schedule := range schedules {
-		sent, err := s.reminderRepo.IsReminderSent(ctx, schedule.ID, reminderDate)
-		if err != nil {
-			return fmt.Errorf("gagal cek status reminder: %w", err)
+		isSent, checkErr := s.reminderRepo.IsReminderSent(ctx, schedule.ID, reminderDate)
+		if checkErr != nil {
+			return false, false, fmt.Errorf("gagal cek status reminder: %w", checkErr)
 		}
-		alreadySent[schedule.ID] = sent
+		alreadySent[schedule.ID] = isSent
 	}
 
-	// Filter jadwal yang belum dikirim remindernya
 	var unsent []models.Jadwal
 	for _, schedule := range schedules {
 		if !alreadySent[schedule.ID] {
 			unsent = append(unsent, schedule)
 		}
 	}
-
 	if len(unsent) == 0 {
-		return nil // Semua reminder sudah dikirim
+		return false, true, nil
 	}
 
-	// Format pesan reminder
 	message := s.formatReminderMessage(unsent, reminderDate)
-
-	// Kirim pesan ke Discord
 	sentMessage, err := s.session.ChannelMessageSendComplex(config.ChannelID, &discordgo.MessageSend{
 		Content: message,
 		AllowedMentions: &discordgo.MessageAllowedMentions{
 			Parse: []discordgo.AllowedMentionType{discordgo.AllowedMentionTypeEveryone},
 		},
 	})
-
 	if err != nil {
-		// Catat sebagai failed
 		for _, schedule := range unsent {
 			reminder := &models.ClassReminder{
-				JadwalID:     schedule.ID,
-				ReminderDate: reminderDate,
-				ChannelID:    config.ChannelID,
-				Status:       "failed",
+				JadwalID: schedule.ID, ReminderDate: reminderDate,
+				ChannelID: config.ChannelID, Status: "failed",
 			}
 			_ = s.reminderRepo.CreateReminder(ctx, reminder)
 		}
-		return fmt.Errorf("gagal mengirim pesan ke Discord: %w", err)
+		return false, false, fmt.Errorf("gagal mengirim pesan ke Discord: %w", err)
 	}
 
-	// Catat reminder yang berhasil dikirim
 	for _, schedule := range unsent {
 		reminder := &models.ClassReminder{
-			JadwalID:     schedule.ID,
-			ReminderDate: reminderDate,
-			ChannelID:    config.ChannelID,
-			MessageID:    &sentMessage.ID,
-			Status:       "sent",
+			JadwalID: schedule.ID, ReminderDate: reminderDate,
+			ChannelID: config.ChannelID, MessageID: &sentMessage.ID, Status: "sent",
 		}
 		if err := s.reminderRepo.CreateReminder(ctx, reminder); err != nil {
-			fmt.Printf("Warning: gagal mencatat reminder untuk jadwal %d: %v\n", schedule.ID, err)
+			return true, false, fmt.Errorf("pesan terkirim tetapi gagal mencatat reminder untuk jadwal %d: %w", schedule.ID, err)
 		}
 	}
-
-	return nil
+	return true, false, nil
 }
 
 // formatReminderMessage membuat pesan reminder yang menarik
