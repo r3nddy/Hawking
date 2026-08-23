@@ -4,8 +4,10 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"hawking-bot/internal/models"
+	"strings"
 	"time"
+
+	"hawking-bot/internal/models"
 )
 
 type ReminderRepository struct {
@@ -28,16 +30,12 @@ func (r *ReminderRepository) CreateReminder(ctx context.Context, reminder *model
 	err := r.db.QueryRowContext(ctx, query,
 		reminder.JadwalID, reminder.ReminderDate, reminder.ChannelID, reminder.MessageID, reminder.Status,
 	).Scan(&reminder.ID, &reminder.SentAt)
-
 	if err == sql.ErrNoRows {
-		// Reminder sudah ada (conflict), ini bukan error
 		return nil
 	}
-
 	if err != nil {
 		return fmt.Errorf("gagal mencatat reminder: %w", err)
 	}
-
 	return nil
 }
 
@@ -49,15 +47,59 @@ func (r *ReminderRepository) IsReminderSent(ctx context.Context, jadwalID int, r
 	`
 
 	var count int
-	err := r.db.QueryRowContext(ctx, query, jadwalID, reminderDate.Format("2006-01-02")).Scan(&count)
-	if err != nil {
+	if err := r.db.QueryRowContext(ctx, query, jadwalID, reminderDate.Format("2006-01-02")).Scan(&count); err != nil {
 		return false, fmt.Errorf("gagal mengecek status reminder: %w", err)
 	}
-
 	return count > 0, nil
 }
 
-// GetReminderConfig mengambil konfigurasi reminder untuk guild
+func scanReminderConfig(scanner interface{ Scan(...any) error }) (models.ReminderConfig, error) {
+	var config models.ReminderConfig
+	var rawReminderTime any
+
+	if err := scanner.Scan(
+		&config.ID,
+		&config.GuildID,
+		&config.ChannelID,
+		&rawReminderTime,
+		&config.IsEnabled,
+		&config.DaysBefore,
+		&config.CreatedAt,
+		&config.UpdatedAt,
+	); err != nil {
+		return config, err
+	}
+
+	reminderTime, err := parseReminderTime(rawReminderTime)
+	if err != nil {
+		return config, err
+	}
+	config.ReminderTime = reminderTime
+	return config, nil
+}
+
+func parseReminderTime(value any) (time.Time, error) {
+	var text string
+	switch typed := value.(type) {
+	case time.Time:
+		return typed, nil
+	case string:
+		text = strings.TrimSpace(typed)
+	case []byte:
+		text = strings.TrimSpace(string(typed))
+	default:
+		return time.Time{}, fmt.Errorf("format reminder_time tidak didukung: %T", value)
+	}
+
+	for _, layout := range []string{"15:04:05.999999999", "15:04:05", "15:04"} {
+		if parsed, err := time.ParseInLocation(layout, text, time.Local); err == nil {
+			return parsed, nil
+		}
+	}
+	return time.Time{}, fmt.Errorf("format reminder_time tidak valid: %q", text)
+}
+
+// GetReminderConfig mengambil konfigurasi reminder untuk guild.
 func (r *ReminderRepository) GetReminderConfig(ctx context.Context, guildID string) (*models.ReminderConfig, error) {
 	query := `
 		SELECT id, guild_id, channel_id, reminder_time, is_enabled, days_before, created_at, updated_at
@@ -65,24 +107,17 @@ func (r *ReminderRepository) GetReminderConfig(ctx context.Context, guildID stri
 		WHERE guild_id = $1
 	`
 
-	var config models.ReminderConfig
-	err := r.db.QueryRowContext(ctx, query, guildID).Scan(
-		&config.ID, &config.GuildID, &config.ChannelID, &config.ReminderTime,
-		&config.IsEnabled, &config.DaysBefore, &config.CreatedAt, &config.UpdatedAt,
-	)
-
+	config, err := scanReminderConfig(r.db.QueryRowContext(ctx, query, guildID))
 	if err == sql.ErrNoRows {
-		return nil, nil // Belum ada konfigurasi
+		return nil, nil
 	}
-
 	if err != nil {
 		return nil, fmt.Errorf("gagal mengambil konfigurasi reminder: %w", err)
 	}
-
 	return &config, nil
 }
 
-// UpsertReminderConfig membuat atau memperbarui konfigurasi reminder
+// UpsertReminderConfig membuat atau memperbarui konfigurasi reminder.
 func (r *ReminderRepository) UpsertReminderConfig(ctx context.Context, config *models.ReminderConfig) error {
 	query := `
 		INSERT INTO reminder_config (guild_id, channel_id, reminder_time, is_enabled, days_before)
@@ -95,18 +130,19 @@ func (r *ReminderRepository) UpsertReminderConfig(ctx context.Context, config *m
 		RETURNING id, created_at, updated_at
 	`
 
-	err := r.db.QueryRowContext(ctx, query,
-		config.GuildID, config.ChannelID, config.ReminderTime, config.IsEnabled, config.DaysBefore,
-	).Scan(&config.ID, &config.CreatedAt, &config.UpdatedAt)
-
-	if err != nil {
+	if err := r.db.QueryRowContext(ctx, query,
+		config.GuildID,
+		config.ChannelID,
+		config.ReminderTime,
+		config.IsEnabled,
+		config.DaysBefore,
+	).Scan(&config.ID, &config.CreatedAt, &config.UpdatedAt); err != nil {
 		return fmt.Errorf("gagal menyimpan konfigurasi reminder: %w", err)
 	}
-
 	return nil
 }
 
-// GetAllActiveConfigs mengambil semua konfigurasi reminder yang aktif
+// GetAllActiveConfigs mengambil semua konfigurasi reminder yang aktif.
 func (r *ReminderRepository) GetAllActiveConfigs(ctx context.Context) ([]models.ReminderConfig, error) {
 	query := `
 		SELECT id, guild_id, channel_id, reminder_time, is_enabled, days_before, created_at, updated_at
@@ -123,18 +159,19 @@ func (r *ReminderRepository) GetAllActiveConfigs(ctx context.Context) ([]models.
 
 	var configs []models.ReminderConfig
 	for rows.Next() {
-		var config models.ReminderConfig
-		if err := rows.Scan(&config.ID, &config.GuildID, &config.ChannelID, &config.ReminderTime,
-			&config.IsEnabled, &config.DaysBefore, &config.CreatedAt, &config.UpdatedAt); err != nil {
+		config, err := scanReminderConfig(rows)
+		if err != nil {
 			return nil, fmt.Errorf("gagal membaca konfigurasi: %w", err)
 		}
 		configs = append(configs, config)
 	}
-
-	return configs, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("gagal membaca konfigurasi: %w", err)
+	}
+	return configs, nil
 }
 
-// GetReminderHistory mengambil riwayat reminder yang sudah dikirim
+// GetReminderHistory mengambil riwayat reminder yang sudah dikirim.
 func (r *ReminderRepository) GetReminderHistory(ctx context.Context, limit int) ([]models.ClassReminder, error) {
 	query := `
 		SELECT id, jadwal_id, reminder_date, sent_at, channel_id, message_id, status
@@ -152,12 +189,21 @@ func (r *ReminderRepository) GetReminderHistory(ctx context.Context, limit int) 
 	var reminders []models.ClassReminder
 	for rows.Next() {
 		var reminder models.ClassReminder
-		if err := rows.Scan(&reminder.ID, &reminder.JadwalID, &reminder.ReminderDate,
-			&reminder.SentAt, &reminder.ChannelID, &reminder.MessageID, &reminder.Status); err != nil {
+		if err := rows.Scan(
+			&reminder.ID,
+			&reminder.JadwalID,
+			&reminder.ReminderDate,
+			&reminder.SentAt,
+			&reminder.ChannelID,
+			&reminder.MessageID,
+			&reminder.Status,
+		); err != nil {
 			return nil, fmt.Errorf("gagal membaca data reminder: %w", err)
 		}
 		reminders = append(reminders, reminder)
 	}
-
-	return reminders, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("gagal membaca data reminder: %w", err)
+	}
+	return reminders, nil
 }
